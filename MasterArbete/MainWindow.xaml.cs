@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
@@ -45,6 +46,9 @@ public partial class MainWindow : Window
             ChannelsText.Text = $"Channels: {info.Channels}";
             BitDepthText.Text = $"Bit depth: {info.BitsPerSample}-bit";
             DurationText.Text = $"Duration: {info.DurationSeconds:0.00} s";
+            ChunksText.Text = "Chunks: " + string.Join(", ",
+                info.Chunks.Select(c => $"{c.Id.TrimEnd()} ({c.Size:N0} B)"));
+            ShowSwelInfo(info);
 
             _player.Open(new Uri(path));
             PlayButton.IsEnabled = true;
@@ -55,8 +59,56 @@ public partial class MainWindow : Window
             _currentFilePath = null;
             PlayButton.IsEnabled = false;
             StopButton.IsEnabled = false;
+            ClearInfo();
+            FilePathText.Text = path;
             StatusText.Text = $"Couldn't read this file: {ex.Message}";
         }
+    }
+
+    private void ShowSwelInfo(WavInfo info)
+    {
+        var swel = info.SwelChunk;
+        if (swel == null)
+        {
+            SwelText.Text = "swel: not found";
+            SwelFieldsText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var dataChunk = info.Chunks.FirstOrDefault(c => c.Id == "data");
+        string position = dataChunk == null ? ""
+            : swel.Offset < dataChunk.Offset ? ", before data" : ", after data";
+
+        SwelText.Text = $"swel: found, {swel.Size:N0} bytes at offset {swel.Offset}{position}";
+
+        if (info.Swel == null || info.Swel.Fields.Count == 0)
+        {
+            SwelFieldsText.Text = "(header is empty)";
+        }
+        else
+        {
+            // Line the values up in a column after the longest key.
+            int keyWidth = info.Swel.Fields.Max(f => f.Key.Length);
+            SwelFieldsText.Text = string.Join("\n",
+                info.Swel.Fields.Select(f => $"{f.Key.PadRight(keyWidth)} = {f.Value}"));
+        }
+        SwelFieldsText.Visibility = Visibility.Visible;
+
+        var problems = info.CheckSwel();
+        if (problems.Count > 0)
+            StatusText.Text = "Header mismatch:\n" + string.Join("\n", problems);
+    }
+
+    private void ClearInfo()
+    {
+        FormatText.Text = "Format: -";
+        SampleRateText.Text = "Sample rate: -";
+        ChannelsText.Text = "Channels: -";
+        BitDepthText.Text = "Bit depth: -";
+        DurationText.Text = "Duration: -";
+        ChunksText.Text = "Chunks: -";
+        SwelText.Text = "swel: -";
+        SwelFieldsText.Visibility = Visibility.Collapsed;
     }
 
     private void PlayButton_Click(object sender, RoutedEventArgs e)

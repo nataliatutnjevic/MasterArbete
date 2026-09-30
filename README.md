@@ -17,7 +17,8 @@ MasterArbete/
   MasterArbete.csproj   # WPF app, targets net8.0-windows
   App.xaml / .cs        # application entry point
   MainWindow.xaml / .cs  # the single window: browse, info panel, play/stop
-  WavFileReader.cs      # standalone RIFF/WAVE header parser (WavInfo + WavFileReader)
+  WavFileReader.cs      # standalone RIFF/WAVE chunk parser (WavInfo + WavFileReader)
+  SwelHeader.cs         # parser for Soundswell's text header in the "swel" chunk
 ```
 
 `WavFileReader.cs` has no dependency on the UI — it just takes a file path and

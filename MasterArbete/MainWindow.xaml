@@ -1,7 +1,7 @@
 <Window x:Class="MasterArbete.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="WAV File Prototype" Height="320" Width="480"
+        Title="WAV File Prototype" Height="680" Width="620"
         WindowStartupLocation="CenterScreen">
     <Grid Margin="16">
         <Grid.RowDefinitions>
@@ -37,6 +37,12 @@
                 <TextBlock x:Name="ChannelsText" Text="Channels: -"/>
                 <TextBlock x:Name="BitDepthText" Text="Bit depth: -"/>
                 <TextBlock x:Name="DurationText" Text="Duration: -"/>
+                <TextBlock x:Name="ChunksText" Text="Chunks: -" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                <TextBlock x:Name="SwelText" Text="swel: -" TextWrapping="Wrap"/>
+                <TextBox x:Name="SwelFieldsText" FontFamily="Consolas" IsReadOnly="True"
+                         BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
+                         MaxHeight="260" VerticalScrollBarVisibility="Auto"
+                         Visibility="Collapsed" Margin="0,4,0,0"/>
             </StackPanel>
         </Border>
 
