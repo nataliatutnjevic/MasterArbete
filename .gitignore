@@ -1,0 +1,13 @@
+## .NET / Visual Studio build artifacts
+bin/
+obj/
+*.user
+
+## Rider / VS Code
+.vs/
+.idea/
+*.suo
+
+## OS junk
+.DS_Store
+Thumbs.db
