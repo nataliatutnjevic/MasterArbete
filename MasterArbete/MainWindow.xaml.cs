@@ -49,6 +49,7 @@ public partial class MainWindow : Window
             ChunksText.Text = "Chunks: " + string.Join(", ",
                 info.Chunks.Select(c => $"{c.Id.TrimEnd()} ({c.Size:N0} B)"));
             ShowSwelInfo(info);
+            ShowWaveform(path, info);
 
             _player.Open(new Uri(path));
             PlayButton.IsEnabled = true;
@@ -99,8 +100,25 @@ public partial class MainWindow : Window
             StatusText.Text = "Header mismatch:\n" + string.Join("\n", problems);
     }
 
+    // A waveform problem (e.g. an unsupported sample type) shouldn't stop the
+    // file from opening and playing, so it's reported in the status line instead.
+    private void ShowWaveform(string path, WavInfo info)
+    {
+        try
+        {
+            Waveform.SetSamples(WavFileReader.ReadSamples(path, info), info.SampleRate);
+        }
+        catch (Exception ex)
+        {
+            Waveform.Clear();
+            if (StatusText.Text.Length > 0) StatusText.Text += "\n";
+            StatusText.Text += $"Couldn't draw the waveform: {ex.Message}";
+        }
+    }
+
     private void ClearInfo()
     {
+        Waveform.Clear();
         FormatText.Text = "Format: -";
         SampleRateText.Text = "Sample rate: -";
         ChannelsText.Text = "Channels: -";

@@ -25,6 +25,7 @@ public class WavInfo
     public short Channels { get; init; }
     public short BitsPerSample { get; init; }
     public uint DataSizeBytes { get; init; }
+
     public string FormatName { get; init; } = "Unknown";
 
     /// <summary>Every chunk in the file, in the order it appears.</summary>
@@ -54,7 +55,9 @@ public class WavInfo
     /// </summary>
     public List<string> CheckSwel()
     {
+        //creates an empty list 
         var problems = new List<string>();
+        //Checks whether the WAV file contains parsed Soundswell metadata, otherwise
         if (Swel == null) return problems;
 
         // This reader only accepts "RIFF" files, which are always little-endian.
@@ -97,6 +100,49 @@ public static class WavFileReader
     private static string ReadId(BinaryReader reader) =>
         Encoding.ASCII.GetString(reader.ReadBytes(4));
 
+    /// <summary>
+    /// Reads one channel of the audio in the "data" chunk, converted to
+    /// floats in the range -1..1 (full scale), one value per sample.
+    /// Supports PCM 8/16/24/32-bit and 32-bit IEEE float.
+    /// </summary>
+    public static float[] ReadSamples(string path, WavInfo info, int channel = 0)
+    {
+        var dataChunk = info.Chunks.FirstOrDefault(c => c.Id == "data")
+            ?? throw new InvalidDataException("WAV file has no 'data' chunk.");
+
+        Func<byte[], int, float> decode = (info.AudioFormat, info.BitsPerSample) switch
+        {
+            (1, 8)  => (b, i) => (b[i] - 128) / 128f,                           // 8-bit PCM is unsigned
+            (1, 16) => (b, i) => BitConverter.ToInt16(b, i) / 32768f,
+            (1, 24) => (b, i) => ((b[i] | b[i + 1] << 8 | (sbyte)b[i + 2] << 16)) / 8388608f,
+            (1, 32) => (b, i) => BitConverter.ToInt32(b, i) / 2147483648f,
+            (3, 32) => (b, i) => BitConverter.ToSingle(b, i),
+            _ => throw new NotSupportedException(
+                $"Can't read samples of this type yet ({info.FormatName}, {info.BitsPerSample}-bit).")
+        };
+
+        int bytesPerSample = info.BitsPerSample / 8;
+        int blockAlign = info.Channels * bytesPerSample;   // bytes per frame (one sample from every channel)
+        if (blockAlign <= 0 || channel < 0 || channel >= info.Channels)
+            throw new InvalidDataException("Invalid channel count in 'fmt ' chunk.");
+
+        using var stream = File.OpenRead(path);
+        stream.Position = dataChunk.Offset;
+
+        // Only whole frames; the file may be shorter than the data chunk claims.
+        long available = Math.Min(dataChunk.Size, stream.Length - dataChunk.Offset);
+        int frames = (int)(available / blockAlign);
+        var bytes = new byte[frames * blockAlign];
+        stream.ReadExactly(bytes);
+
+        var samples = new float[frames];
+        int channelOffset = channel * bytesPerSample;
+        for (int i = 0; i < frames; i++)
+            samples[i] = decode(bytes, i * blockAlign + channelOffset);
+
+        return samples;
+    }
+
     public static WavInfo ReadHeader(string path)
     {
         using var stream = File.OpenRead(path);
@@ -124,7 +170,7 @@ public static class WavFileReader
         // stop as soon as "fmt " and "data" have been seen.
         while (stream.Position < stream.Length)
         {
-            if (stream.Length - stream.Position < 8) break; // not enough left for a chunk header
+            if (stream.Length - stream.Position < 8) break; // not enough left for a chunk header, prevents the program from trying to read beyond the end of the file.
 
             string chunkId = ReadId(reader);
             uint chunkSize = reader.ReadUInt32();
