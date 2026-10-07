@@ -67,8 +67,12 @@ public class WavInfo
         if (Swel.Channels is int ch && ch != Channels)
             problems.Add($"swel says {ch} channel(s), fmt says {Channels}.");
 
-        if (Swel.SampleRate is int sr && sr != SampleRate)
-            problems.Add($"swel says sample rate {sr} Hz, fmt says {SampleRate} Hz.");
+        // sftot is the total rate for all channels together, while fmt stores
+        // the rate of one channel, so compare per channel.
+        int swelChannels = Swel.Channels ?? Channels;
+        if (Swel.TotalSampleRate is int total && swelChannels > 0 && total != (long)SampleRate * swelChannels)
+            problems.Add($"swel says sample rate {total / swelChannels} Hz per channel " +
+                         $"(sftot={total} over {swelChannels} channel(s)), fmt says {SampleRate} Hz.");
 
         if (Swel.DataType is string type && type.Equals("int16", StringComparison.OrdinalIgnoreCase)
             && (AudioFormat != 1 || BitsPerSample != 16))
