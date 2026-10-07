@@ -106,7 +106,14 @@ public partial class MainWindow : Window
     {
         try
         {
-            Waveform.SetSamples(WavFileReader.ReadSamples(path, info), info.SampleRate);
+            // The waveform shows channel 0, so use that channel's swel settings.
+            // "range" is in raw sample values, while the waveform works in -1..1.
+            (double Min, double Max)? sampleRange = info.Swel?.GetRange(0) is { } range
+                ? (range.Min / info.FullScale, range.Max / info.FullScale)
+                : null;
+
+            Waveform.SetSamples(WavFileReader.ReadSamples(path, info), info.SampleRate,
+                sampleRange, info.Swel?.GetView(0));
         }
         catch (Exception ex)
         {

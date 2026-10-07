@@ -28,6 +28,12 @@ public class WavInfo
 
     public string FormatName { get; init; } = "Unknown";
 
+    /// <summary>
+    /// The raw sample value that counts as full scale (1.0 once converted to
+    /// float): 32768 for 16-bit PCM, 1 for IEEE float.
+    /// </summary>
+    public double FullScale => AudioFormat == 3 ? 1 : Math.Pow(2, BitsPerSample - 1);
+
     /// <summary>Every chunk in the file, in the order it appears.</summary>
     public IReadOnlyList<WavChunk> Chunks { get; init; } = Array.Empty<WavChunk>();
 

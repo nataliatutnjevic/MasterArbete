@@ -20,6 +20,8 @@ public class WaveformView : FrameworkElement
 {
     private const double AxisHeight = 24;    // space reserved at the bottom for the time axis. Reserve 24 pixels for the time axis.
     private const double MinTickSpacing = 80; // aim for at least this many pixels between time labels, so the lables don`t become overcrowded.
+    private const double YAxisWidth = 52;     // space reserved on the left for the y-axis labels
+    private const double MinYTickSpacing = 36; // aim for at least this many pixels between y-axis labels
 
     private static readonly Brush BackgroundBrush = Brushes.White; //these define the colors and thicknesses used when drawing
     private static readonly Pen WavePen = MakePen(Color.FromRgb(0x1F, 0x5F, 0xAF), 1);
@@ -30,12 +32,27 @@ public class WaveformView : FrameworkElement
     private float[] _samples = Array.Empty<float>(); //where the actual audio samples stored: _samples contain the amplitudes.
     private int _sampleRate; //_sampleRate tells you ow many samples represent one second, for example _sampleRate=44100
 
-    /// <summary>Shows these samples (values in -1..1) recorded at the given rate.</summary>
+    // Vertical scale: the sample values at the bottom and top of the plot,
+    // and the numbers the y-axis shows for them.
+    private double _sampleMin = -1, _sampleMax = 1;
+    private double _axisMin = -1, _axisMax = 1;
+
+    /// <summary>
+    /// Shows these samples (values in -1..1) recorded at the given rate.
+    /// sampleRange is the sample values at the bottom and top of the plot
+    /// (full scale, -1..1, if left out). axisValues is the numbers the y-axis
+    /// shows for those two (the sample values themselves if left out).
+    /// </summary>
     /// This gices the waveform component new audio to display.
-    public void SetSamples(float[] samples, int sampleRate)
+    public void SetSamples(float[] samples, int sampleRate,
+        (double Min, double Max)? sampleRange = null, (double Min, double Max)? axisValues = null)
     {
         _samples = samples;
         _sampleRate = sampleRate;
+
+        // A range that is empty or upside down can't be drawn, so fall back.
+        (_sampleMin, _sampleMax) = sampleRange is { } r && r.Max > r.Min ? r : (-1, 1);
+        (_axisMin, _axisMax) = axisValues is { } a && a.Max > a.Min ? a : (_sampleMin, _sampleMax);
         InvalidateVisual();
     }
 
@@ -47,33 +64,72 @@ public class WaveformView : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
 
-        double width = ActualWidth;
+        double width = ActualWidth - YAxisWidth;   // the plot starts to the right of the y-axis labels
         double waveHeight = ActualHeight - AxisHeight;
         //draws the white background
         dc.DrawRectangle(BackgroundBrush, null, new Rect(0, 0, ActualWidth, ActualHeight));
         if (width < 1 || waveHeight < 1) return;
 
-        // Zero line through the middle of the waveform area. (zero aplitude line)
-        double mid = Math.Round(waveHeight / 2) + 0.5;   // +0.5 keeps 1px lines sharp
-        dc.DrawLine(ZeroLinePen, new Point(0, mid), new Point(width, mid));
+        bool hasAudio = _samples.Length > 0 && _sampleRate > 0;
+        if (hasAudio) DrawYAxis(dc, waveHeight);
 
-        if (_samples.Length == 0 || _sampleRate <= 0) //if there is no audio. 
+        // Everything below is drawn with x = 0 at the left edge of the plot.
+        dc.PushTransform(new TranslateTransform(YAxisWidth, 0));
+
+        // Zero line (zero aplitude line), if zero is inside the range shown.
+        if (_sampleMin <= 0 && _sampleMax >= 0)
         {
-            DrawText(dc, "No waveform", new Point(8, 8), TextAlignment.Left); 
-            return;
+            double zeroY = Math.Round(ToY(0, waveHeight)) + 0.5;   // +0.5 keeps 1px lines sharp
+            dc.DrawLine(ZeroLinePen, new Point(0, zeroY), new Point(width, zeroY));
         }
 
-        DrawWaveform(dc, width, waveHeight);
-        DrawTimeAxis(dc, width, waveHeight);
+        if (hasAudio)
+        {
+            DrawWaveform(dc, width, waveHeight);
+            DrawTimeAxis(dc, width, waveHeight);
+        }
+        else //if there is no audio.
+        {
+            DrawText(dc, "No waveform", new Point(8, 8), TextAlignment.Left);
+        }
+
+        dc.Pop();
+    }
+
+    // Sample value converted into y coordinate: _sampleMax at the top, _sampleMin at the bottom.
+    private double ToY(double value, double waveHeight) =>
+        (_sampleMax - Math.Clamp(value, _sampleMin, _sampleMax)) / (_sampleMax - _sampleMin) * waveHeight;
+
+    private void DrawYAxis(DrawingContext dc, double waveHeight)
+    {
+        double axisX = YAxisWidth - 0.5;
+        dc.DrawLine(AxisPen, new Point(axisX, 0), new Point(axisX, waveHeight));
+
+        double span = _axisMax - _axisMin;
+        double step = NiceStep(span * MinYTickSpacing / waveHeight);
+        int decimals = Decimals(step);
+
+        // Ticks at whole multiples of the step, so the labels are round numbers.
+        long first = (long)Math.Ceiling(_axisMin / step - 1e-9);
+        long last = (long)Math.Floor(_axisMax / step + 1e-9);
+        for (long n = first; n <= last; n++)
+        {
+            double value = n * step;
+            double y = Math.Round((_axisMax - value) / span * waveHeight) + 0.5;
+            dc.DrawLine(AxisPen, new Point(axisX - 4, y), new Point(axisX, y));
+
+            var label = MakeText(value.ToString("F" + decimals, CultureInfo.CurrentCulture), TextAlignment.Right);
+            // Centre the label on its tick, but keep it inside the waveform area.
+            double labelY = Math.Clamp(y - label.Height / 2, 0, Math.Max(waveHeight - label.Height, 0));
+            dc.DrawText(label, new Point(axisX - 6, labelY));
+        }
     }
 
     private void DrawWaveform(DrawingContext dc, double width, double waveHeight)
     {
-        double mid = waveHeight / 2; 
         double samplesPerPixel = _samples.Length / width; //samples per pixel is extremely important
 
-        // Sample value (-1..1) converted into y coordinate: +1 at the top, -1 at the bottom.
-        double ToY(float value) => mid - Math.Clamp(value, -1f, 1f) * mid;
+        double ToY(float value) => this.ToY(value, waveHeight);
 
         var geometry = new StreamGeometry();
         using (var ctx = geometry.Open())
@@ -122,7 +178,7 @@ public class WaveformView : FrameworkElement
         dc.DrawLine(AxisPen, new Point(0, axisY), new Point(width, axisY));
 
         double step = NiceStep(duration * MinTickSpacing / width);
-        int decimals = step >= 1 ? 0 : (int)Math.Ceiling(-Math.Log10(step) - 1e-9);
+        int decimals = Decimals(step);
 
         for (int n = 0; n * step <= duration + 1e-9; n++)
         {
@@ -147,15 +203,19 @@ public class WaveformView : FrameworkElement
         return 10 * magnitude;
     }
 
-    private void DrawText(DrawingContext dc, string text, Point at, TextAlignment alignment)
-    {
-        var formatted = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+    // How many decimals a label needs to show a step exactly (1 -> 0, 0.5 -> 1, 0.02 -> 2).
+    private static int Decimals(double step) =>
+        step >= 1 ? 0 : (int)Math.Ceiling(-Math.Log10(step) - 1e-9);
+
+    private void DrawText(DrawingContext dc, string text, Point at, TextAlignment alignment) =>
+        dc.DrawText(MakeText(text, alignment), at);
+
+    private FormattedText MakeText(string text, TextAlignment alignment) =>
+        new(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
             new Typeface("Segoe UI"), 11, LabelBrush, VisualTreeHelper.GetDpi(this).PixelsPerDip)
         {
             TextAlignment = alignment
         };
-        dc.DrawText(formatted, at);
-    }
 
     // Frozen brushes and pens are read-only, which lets WPF share them cheaply.
     private static Brush MakeBrush(Color color)
