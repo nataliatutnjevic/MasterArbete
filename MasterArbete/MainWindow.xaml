@@ -51,6 +51,7 @@
                 <StackPanel Grid.Column="0" Margin="0,0,16,0">
                     <TextBlock Text="File info" FontWeight="Bold" Margin="0,0,0,8"/>
                     <TextBlock x:Name="FormatText" Text="Format: -"/>
+                    <TextBlock x:Name="ByteOrderText" Text="Byte order: -"/>
                     <TextBlock x:Name="SampleRateText" Text="Sample rate: -"/>
                     <TextBlock x:Name="ChannelsText" Text="Channels: -"/>
                     <TextBlock x:Name="BitDepthText" Text="Bit depth: -"/>

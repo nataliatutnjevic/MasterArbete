@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -27,6 +28,12 @@ public class WavInfo
     public uint DataSizeBytes { get; init; }
 
     public string FormatName { get; init; } = "Unknown";
+
+    /// <summary>
+    /// True for a "RIFX" file, where every number and sample is stored
+    /// big-endian (most significant byte first); false for a normal "RIFF" file.
+    /// </summary>
+    public bool IsBigEndian { get; init; }
 
     /// <summary>
     /// The raw sample value that counts as full scale (1.0 once converted to
@@ -66,9 +73,11 @@ public class WavInfo
         //Checks whether the WAV file contains parsed Soundswell metadata, otherwise
         if (Swel == null) return problems;
 
-        // This reader only accepts "RIFF" files, which are always little-endian.
-        if (Swel.IsBigEndian == true)
-            problems.Add("swel says msb=first (big-endian), but the file is RIFF (little-endian).");
+        // The byte order in swel should match the file's: RIFF is little-endian, RIFX big-endian.
+        if (Swel.IsBigEndian is bool swelBigEndian && swelBigEndian != IsBigEndian)
+            problems.Add(swelBigEndian
+                ? "swel says msb=first (big-endian), but the file is RIFF (little-endian)."
+                : "swel says msb=last (little-endian), but the file is RIFX (big-endian).");
 
         if (Swel.Channels is int ch && ch != Channels)
             problems.Add($"swel says {ch} channel(s), fmt says {Channels}.");
@@ -120,13 +129,18 @@ public static class WavFileReader
         var dataChunk = info.Chunks.FirstOrDefault(c => c.Id == "data")
             ?? throw new InvalidDataException("WAV file has no 'data' chunk.");
 
-        Func<byte[], int, float> decode = (info.AudioFormat, info.BitsPerSample) switch
+        // A RIFX file stores each sample's bytes in the opposite order (big-endian).
+        Func<byte[], int, float> decode = (info.AudioFormat, info.BitsPerSample, info.IsBigEndian) switch
         {
-            (1, 8)  => (b, i) => (b[i] - 128) / 128f,                           // 8-bit PCM is unsigned
-            (1, 16) => (b, i) => BitConverter.ToInt16(b, i) / 32768f,
-            (1, 24) => (b, i) => ((b[i] | b[i + 1] << 8 | (sbyte)b[i + 2] << 16)) / 8388608f,
-            (1, 32) => (b, i) => BitConverter.ToInt32(b, i) / 2147483648f,
-            (3, 32) => (b, i) => BitConverter.ToSingle(b, i),
+            (1, 8, _)      => (b, i) => (b[i] - 128) / 128f,                     // 8-bit PCM is unsigned; one byte, so no byte order
+            (1, 16, false) => (b, i) => BitConverter.ToInt16(b, i) / 32768f,
+            (1, 16, true)  => (b, i) => BinaryPrimitives.ReadInt16BigEndian(b.AsSpan(i)) / 32768f,
+            (1, 24, false) => (b, i) => ((b[i] | b[i + 1] << 8 | (sbyte)b[i + 2] << 16)) / 8388608f,
+            (1, 24, true)  => (b, i) => (((sbyte)b[i] << 16 | b[i + 1] << 8 | b[i + 2])) / 8388608f,
+            (1, 32, false) => (b, i) => BitConverter.ToInt32(b, i) / 2147483648f,
+            (1, 32, true)  => (b, i) => BinaryPrimitives.ReadInt32BigEndian(b.AsSpan(i)) / 2147483648f,
+            (3, 32, false) => (b, i) => BitConverter.ToSingle(b, i),
+            (3, 32, true)  => (b, i) => BinaryPrimitives.ReadSingleBigEndian(b.AsSpan(i)),
             _ => throw new NotSupportedException(
                 $"Can't read samples of this type yet ({info.FormatName}, {info.BitsPerSample}-bit).")
         };
@@ -153,18 +167,78 @@ public static class WavFileReader
         return samples;
     }
 
+    /// <summary>
+    /// Writes the audio as a normal little-endian ("RIFF") WAV file with just
+    /// a "fmt " and a "data" chunk, swapping the bytes of every sample if the
+    /// source is RIFX. Used to play RIFX files, which Windows can't play.
+    /// </summary>
+    public static void WriteLittleEndianCopy(string path, WavInfo info, string destination)
+    {
+        var dataChunk = info.Chunks.FirstOrDefault(c => c.Id == "data")
+            ?? throw new InvalidDataException("WAV file has no 'data' chunk.");
+
+        int bytesPerSample = info.BitsPerSample / 8;
+        int blockAlign = info.Channels * bytesPerSample;
+        if (blockAlign <= 0 || info.BitsPerSample % 8 != 0)
+            throw new InvalidDataException("Invalid channel count or bit depth in 'fmt ' chunk.");
+
+        // Same rule as ReadSamples: only whole frames that are really in the file.
+        byte[] data;
+        using (var source = File.OpenRead(path))
+        {
+            source.Position = dataChunk.Offset;
+            long available = Math.Min(dataChunk.Size, source.Length - dataChunk.Offset);
+            data = new byte[available / blockAlign * blockAlign];
+            source.ReadExactly(data);
+        }
+
+        if (info.IsBigEndian && bytesPerSample > 1)
+        {
+            for (int i = 0; i < data.Length; i += bytesPerSample)
+                Array.Reverse(data, i, bytesPerSample);
+        }
+
+        // BinaryWriter always writes little-endian.
+        using var writer = new BinaryWriter(File.Create(destination));
+        writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+        writer.Write((uint)(4 + (8 + 16) + (8 + data.Length + data.Length % 2)));   // file size after this field
+        writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+
+        writer.Write(Encoding.ASCII.GetBytes("fmt "));
+        writer.Write(16u);
+        writer.Write(info.AudioFormat);
+        writer.Write(info.Channels);
+        writer.Write(info.SampleRate);
+        writer.Write(info.SampleRate * blockAlign);                // byte rate
+        writer.Write((short)blockAlign);
+        writer.Write(info.BitsPerSample);
+
+        writer.Write(Encoding.ASCII.GetBytes("data"));
+        writer.Write((uint)data.Length);
+        writer.Write(data);
+        if (data.Length % 2 == 1) writer.Write((byte)0);           // chunks are word-aligned
+    }
+
     public static WavInfo ReadHeader(string path)
     {
         using var stream = File.OpenRead(path);
         using var reader = new BinaryReader(stream);
 
         // RIFF header
-        string riffId = ReadId(reader);      // "RIFF"
+        string riffId = ReadId(reader);      // "RIFF", or "RIFX" for a big-endian file
         reader.ReadUInt32();                                   // overall file size (ignored)
         string waveId = ReadId(reader);      // "WAVE"
 
-        if (riffId != "RIFF" || waveId != "WAVE")
-            throw new InvalidDataException("Not a valid WAV file (missing RIFF/WAVE header).");
+        if ((riffId != "RIFF" && riffId != "RIFX") || waveId != "WAVE")
+            throw new InvalidDataException("Not a valid WAV file (missing RIFF/RIFX and WAVE header).");
+
+        // BinaryReader always reads little-endian, so in a RIFX file every
+        // number has to have its bytes swapped. The 4-letter IDs are text and
+        // look the same in both.
+        bool bigEndian = riffId == "RIFX";
+        short ReadInt16() => bigEndian ? BinaryPrimitives.ReverseEndianness(reader.ReadInt16()) : reader.ReadInt16();
+        int ReadInt32() => bigEndian ? BinaryPrimitives.ReverseEndianness(reader.ReadInt32()) : reader.ReadInt32();
+        uint ReadUInt32() => bigEndian ? BinaryPrimitives.ReverseEndianness(reader.ReadUInt32()) : reader.ReadUInt32();
 
         int sampleRate = 0;
         short channels = 0;
@@ -183,18 +257,18 @@ public static class WavFileReader
             if (stream.Length - stream.Position < 8) break; // not enough left for a chunk header, prevents the program from trying to read beyond the end of the file.
 
             string chunkId = ReadId(reader);
-            uint chunkSize = reader.ReadUInt32();
+            uint chunkSize = ReadUInt32();
             long chunkDataStart = stream.Position;
             chunks.Add(new WavChunk(chunkId, chunkDataStart, chunkSize));
 
             if (chunkId == "fmt ")
             {
-                audioFormat = reader.ReadInt16();
-                channels = reader.ReadInt16();
-                sampleRate = reader.ReadInt32();
-                reader.ReadInt32();          // byte rate (ignored)
-                reader.ReadInt16();          // block align (ignored)
-                bitsPerSample = reader.ReadInt16();
+                audioFormat = ReadInt16();
+                channels = ReadInt16();
+                sampleRate = ReadInt32();
+                ReadInt32();                 // byte rate (ignored)
+                ReadInt16();                 // block align (ignored)
+                bitsPerSample = ReadInt16();
                 haveFmt = true;
             }
             else if (chunkId == "data")
@@ -226,6 +300,7 @@ public static class WavFileReader
             Channels = channels,
             BitsPerSample = bitsPerSample,
             DataSizeBytes = dataSize,
+            IsBigEndian = bigEndian,
             Chunks = chunks,
             Swel = swel,
             FormatName = audioFormat switch

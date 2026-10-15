@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Media;
@@ -12,6 +13,7 @@ public partial class MainWindow : Window
     // limited to uncompressed PCM if this ever needs to handle more formats.
     private readonly MediaPlayer _player = new();
     private string? _currentFilePath;
+    private string? _playbackCopy;   // temporary little-endian copy of a RIFX file, deleted when no longer needed
 
     public MainWindow()
     {
@@ -42,6 +44,7 @@ public partial class MainWindow : Window
             _currentFilePath = path;
             FilePathText.Text = path;
             FormatText.Text = $"Format: {info.FormatName}";
+            ByteOrderText.Text = info.IsBigEndian ? "Byte order: big-endian (RIFX)" : "Byte order: little-endian (RIFF)";
             SampleRateText.Text = $"Sample rate: {info.SampleRate} Hz";
             ChannelsText.Text = $"Channels: {info.Channels}";
             BitDepthText.Text = $"Bit depth: {info.BitsPerSample}-bit";
@@ -51,9 +54,9 @@ public partial class MainWindow : Window
             ShowSwelInfo(info);
             ShowWaveform(path, info);
 
-            _player.Open(new Uri(path));
-            PlayButton.IsEnabled = true;
-            StopButton.IsEnabled = true;
+            bool canPlay = OpenForPlayback(path, info);
+            PlayButton.IsEnabled = canPlay;
+            StopButton.IsEnabled = canPlay;
         }
         catch (Exception ex)
         {
@@ -118,15 +121,58 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             Waveform.Clear();
-            if (StatusText.Text.Length > 0) StatusText.Text += "\n";
-            StatusText.Text += $"Couldn't draw the waveform: {ex.Message}";
+            AppendStatus($"Couldn't draw the waveform: {ex.Message}");
         }
+    }
+
+    // Windows can't play RIFX (big-endian) files, so those are played from a
+    // temporary little-endian copy. Like the waveform, a problem here shouldn't
+    // stop the file from being shown, so it's reported in the status line.
+    private bool OpenForPlayback(string path, WavInfo info)
+    {
+        DeletePlaybackCopy();
+        if (!info.IsBigEndian)
+        {
+            _player.Open(new Uri(path));
+            return true;
+        }
+
+        try
+        {
+            _playbackCopy = Path.Combine(Path.GetTempPath(), $"MasterArbete-{Guid.NewGuid():N}.wav");
+            WavFileReader.WriteLittleEndianCopy(path, info, _playbackCopy);
+            _player.Open(new Uri(_playbackCopy));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            DeletePlaybackCopy();
+            AppendStatus($"Couldn't prepare this RIFX file for playback: {ex.Message}");
+            return false;
+        }
+    }
+
+    private void DeletePlaybackCopy()
+    {
+        if (_playbackCopy == null) return;
+        _player.Close();   // let go of the file before deleting it
+        try { File.Delete(_playbackCopy); }
+        catch (IOException) { }                    // still in use: it's in the temp folder, so leaving it is harmless
+        catch (UnauthorizedAccessException) { }
+        _playbackCopy = null;
+    }
+
+    private void AppendStatus(string message)
+    {
+        if (StatusText.Text.Length > 0) StatusText.Text += "\n";
+        StatusText.Text += message;
     }
 
     private void ClearInfo()
     {
         Waveform.Clear();
         FormatText.Text = "Format: -";
+        ByteOrderText.Text = "Byte order: -";
         SampleRateText.Text = "Sample rate: -";
         ChannelsText.Text = "Channels: -";
         BitDepthText.Text = "Bit depth: -";
@@ -150,6 +196,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _player.Close();
+        DeletePlaybackCopy();
         base.OnClosed(e);
     }
 }
