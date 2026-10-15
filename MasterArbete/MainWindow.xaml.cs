@@ -18,6 +18,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // At the end of the recording the player stays at the end, so Play
+        // would do nothing. Stop rewinds it, so the next Play starts over.
+        _player.MediaEnded += (_, _) => _player.Stop();
     }
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)
@@ -56,12 +60,14 @@ public partial class MainWindow : Window
 
             bool canPlay = OpenForPlayback(path, info);
             PlayButton.IsEnabled = canPlay;
+            PauseButton.IsEnabled = canPlay;
             StopButton.IsEnabled = canPlay;
         }
         catch (Exception ex)
         {
             _currentFilePath = null;
             PlayButton.IsEnabled = false;
+            PauseButton.IsEnabled = false;
             StopButton.IsEnabled = false;
             ClearInfo();
             FilePathText.Text = path;
@@ -182,12 +188,21 @@ public partial class MainWindow : Window
         SwelFieldsText.Visibility = Visibility.Collapsed;
     }
 
+    // Play starts from the current position: the beginning after Stop, or
+    // where playback was paused after Pause.
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFilePath == null) return;
         _player.Play();
     }
 
+    // Pause keeps the position, so the next Play continues from here.
+    private void PauseButton_Click(object sender, RoutedEventArgs e)
+    {
+        _player.Pause();
+    }
+
+    // Stop rewinds to the beginning.
     private void StopButton_Click(object sender, RoutedEventArgs e)
     {
         _player.Stop();
