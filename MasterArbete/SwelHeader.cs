@@ -82,8 +82,14 @@ public class SwelHeader
     /// <summary>From "range": the lowest and highest sample value to display.</summary>
     public (double Min, double Max)? Range => GetPair("range");
 
-    /// <summary>From "view": the values shown at the bottom and top of the y-axis.</summary>
+    /// <summary>
+    /// From "view": the values shown at the bottom and top of the y-axis.
+    /// A calibrated file adds a unit after them, as in "view=-31.55,31.55,Pa".
+    /// </summary>
     public (double Min, double Max)? View => GetPair("view");
+
+    /// <summary>From "view": the unit of the y-axis values (e.g. "Pa"), or null if none is given.</summary>
+    public string? ViewUnit => GetUnit("view");
 
     /// <summary>
     /// From "scan": the channel sequence. Only used in multichannel files
@@ -140,13 +146,29 @@ public class SwelHeader
     /// <summary>From "viewX", or "view" if the channel doesn't have its own.</summary>
     public (double Min, double Max)? GetView(int channel) => GetPair($"view{channel}") ?? View;
 
-    // A "min,max" value as two numbers, or null if it isn't exactly that.
-    private (double Min, double Max)? GetPair(string key) =>
-        GetNumbers(key) is { Length: 2 } n ? (n[0], n[1]) : null;
+    /// <summary>The unit that goes with GetView(channel), or null if none is given.</summary>
+    public string? GetViewUnit(int channel) =>
+        GetPair($"view{channel}") != null ? GetUnit($"view{channel}") : ViewUnit;
+
+    // A "min,max" value as two numbers, or null if it isn't that. A third
+    // part is allowed for a unit, as in "view=-31.55,31.55,Pa".
+    private (double Min, double Max)? GetPair(string key)
+    {
+        string[]? parts = Get(key)?.Split(',');
+        if (parts is not { Length: 2 or 3 } || (parts.Length == 3 && GetUnit(key) == null))
+            return null;
+        return TryParseNumber(parts[0], out double min) && TryParseNumber(parts[1], out double max)
+            ? (min, max) : null;
+    }
+
+    // The unit after "min,max", or null if there is no third part or it's a number.
+    private string? GetUnit(string key) =>
+        Get(key)?.Split(',') is { Length: 3 } parts && parts[2].Trim() is { Length: > 0 } unit
+            && !TryParseNumber(unit, out _)
+            ? unit : null;
 
     // A comma-separated value as numbers, or null if the key is missing or
-    // any part isn't a number. Invariant culture so "2.5" is read the same
-    // way on a Swedish system, where the decimal separator is a comma.
+    // any part isn't a number.
     private double[]? GetNumbers(string key)
     {
         string? value = Get(key);
@@ -156,11 +178,16 @@ public class SwelHeader
         var numbers = new double[parts.Length];
         for (int i = 0; i < parts.Length; i++)
         {
-            if (!double.TryParse(parts[i], NumberStyles.Float, CultureInfo.InvariantCulture, out numbers[i]))
+            if (!TryParseNumber(parts[i], out numbers[i]))
                 return null;
         }
         return numbers;
     }
+
+    // Invariant culture so "2.5" is read the same way on a Swedish system,
+    // where the decimal separator is a comma.
+    private static bool TryParseNumber(string text, out double number) =>
+        double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number);
     //SwelHeader takes the raw bytes from the swel chunk in the wav file and converts them into readable info, organized as key value  pairs.
     public static SwelHeader Parse(byte[] bytes)
     {

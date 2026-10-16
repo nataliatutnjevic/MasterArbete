@@ -36,23 +36,28 @@ public class WaveformView : FrameworkElement
     // and the numbers the y-axis shows for them.
     private double _sampleMin = -1, _sampleMax = 1;
     private double _axisMin = -1, _axisMax = 1;
+    private string? _axisUnit;   // e.g. "Pa" for a calibrated recording
 
     /// <summary>
     /// Shows these samples (values in -1..1) recorded at the given rate.
     /// sampleRange is the sample values at the bottom and top of the plot
     /// (full scale, -1..1, if left out). axisValues is the numbers the y-axis
-    /// shows for those two (the sample values themselves if left out).
+    /// shows for those two (the sample values themselves if left out), and
+    /// axisUnit the unit they are in.
     /// </summary>
     /// This gices the waveform component new audio to display.
     public void SetSamples(float[] samples, int sampleRate,
-        (double Min, double Max)? sampleRange = null, (double Min, double Max)? axisValues = null)
+        (double Min, double Max)? sampleRange = null, (double Min, double Max)? axisValues = null,
+        string? axisUnit = null)
     {
         _samples = samples;
         _sampleRate = sampleRate;
 
         // A range that is empty or upside down can't be drawn, so fall back.
         (_sampleMin, _sampleMax) = sampleRange is { } r && r.Max > r.Min ? r : (-1, 1);
-        (_axisMin, _axisMax) = axisValues is { } a && a.Max > a.Min ? a : (_sampleMin, _sampleMax);
+        bool validAxis = axisValues is { } a && a.Max > a.Min;
+        (_axisMin, _axisMax) = validAxis ? axisValues!.Value : (_sampleMin, _sampleMax);
+        _axisUnit = validAxis ? axisUnit : null;   // the unit only applies to the values it came with
         InvalidateVisual();
     }
 
@@ -104,6 +109,10 @@ public class WaveformView : FrameworkElement
     {
         double axisX = YAxisWidth - 0.5;
         dc.DrawLine(AxisPen, new Point(axisX, 0), new Point(axisX, waveHeight));
+
+        // The unit goes in the top-left corner of the plot, next to the axis.
+        if (_axisUnit != null)
+            DrawText(dc, _axisUnit, new Point(YAxisWidth + 4, 2), TextAlignment.Left);
 
         double span = _axisMax - _axisMin;
         double step = NiceStep(span * MinYTickSpacing / waveHeight);

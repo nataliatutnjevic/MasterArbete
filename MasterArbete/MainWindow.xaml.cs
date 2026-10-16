@@ -122,7 +122,7 @@ public partial class MainWindow : Window
                 : null;
 
             Waveform.SetSamples(WavFileReader.ReadSamples(path, info), info.SampleRate,
-                sampleRange, info.Swel?.GetView(0));
+                sampleRange, info.Swel?.GetView(0), info.Swel?.GetViewUnit(0));
         }
         catch (Exception ex)
         {
