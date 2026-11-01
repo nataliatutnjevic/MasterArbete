@@ -60,6 +60,12 @@ public static class Lundeby
     private const double MinNoiseFraction = 0.1;           // noise from at least the last 10 %
     private const int MaxIterations = 5;
 
+    // A late fit through only one or two intervals can follow a random dip
+    // instead of the decay (seen in narrow bands with very short decays, where
+    // it gave a nearly flat line and a crossing point at the very end), so
+    // then the previous line is kept. Not from the paper.
+    private const int MinLateFitPoints = 3;
+
     /// <summary>
     /// Runs Lundeby's method on h[onset..]. Returns null when there is no
     /// decay clearly above the noise to work with.
@@ -103,7 +109,7 @@ public static class Lundeby
             peak = IndexOfMax(envelope);
             int lateStart = FirstAtOrBelow(envelope, peak, noiseDb + LateFitAboveNoiseDb + LateFitRangeDb);
             int lateEnd = FirstAtOrBelow(envelope, lateStart, noiseDb + LateFitAboveNoiseDb);
-            if (FitLine(envelope, lateStart, lateEnd) is not { } late || late.Slope >= 0)
+            if (lateEnd - lateStart < MinLateFitPoints || FitLine(envelope, lateStart, lateEnd) is not { } late || late.Slope >= 0)
                 break;   // keep the previous line
 
             // 9. New crossing point.

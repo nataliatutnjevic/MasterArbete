@@ -41,6 +41,38 @@ public static class SyntheticDecay
         return h;
     }
 
+    /// <summary>
+    /// A decay with its own reverberation time in each octave band. Each
+    /// band's part is white noise filtered to the middle third of the octave
+    /// (centre · 2^(±1/6)), so the neighbouring octave filters hardly pick it
+    /// up, scaled to a mean square of 1 and given its band's exponential decay.
+    /// </summary>
+    public static float[] PerBand(IReadOnlyDictionary<double, double> reverberationTimeByNominalHz, double lengthSeconds = 2,
+        double? noiseBelowPeakDb = null, int sampleRate = SampleRate, int seed = 1)
+    {
+        var rng = new Random(seed);
+        int length = (int)Math.Round(lengthSeconds * sampleRate);
+        var sum = new double[length];
+
+        foreach (var (nominal, t) in reverberationTimeByNominalHz)
+        {
+            var band = OctaveBand.FromNominal(nominal);
+            var white = Enumerable.Range(0, length).Select(_ => Gaussian(rng)).ToArray();
+            var carrier = BandPassFilter.Butterworth(band.CentreHz / Math.Pow(2, 1 / 6.0), band.CentreHz * Math.Pow(2, 1 / 6.0), sampleRate)
+                .Apply(white, timeReversed: false);
+            double rms = Math.Sqrt(carrier.Average(v => v * v));
+            for (int i = 0; i < length; i++)
+                sum[i] += carrier[i] / rms * Math.Exp(-6.908 * i / sampleRate / t);
+        }
+
+        if (noiseBelowPeakDb is { } db)
+        {
+            double rms = Math.Pow(10, -db / 20);
+            for (int i = 0; i < length; i++) sum[i] += rms * Gaussian(rng);
+        }
+        return sum.Select(v => (float)v).ToArray();
+    }
+
     /// <summary>Two decays added together: a fast one and a slow one starting lower (a curved decay).</summary>
     public static float[] DoubleSlope(double fastT, double slowT, double slowBelowDb, double lengthSeconds = 2, int seed = 1)
     {

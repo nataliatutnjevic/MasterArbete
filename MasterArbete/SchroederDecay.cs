@@ -87,12 +87,18 @@ public static class SchroederDecay
         if (start < 0 || count < 0 || start + count > signal.Length)
             throw new ArgumentOutOfRangeException(nameof(start));
 
-        int window = Math.Max(1, (int)Math.Round(EnvelopeWindowSeconds * sampleRate));
-        if (count < 10 * window)
-            throw new ArgumentException($"Need at least {10 * EnvelopeWindowSeconds:0.0} s to analyse a decay.", nameof(count));
-
         var h = new double[count];
         for (int i = 0; i < count; i++) h[i] = signal[start + i];
+        return Analyse(h, sampleRate);
+    }
+
+    /// <summary>Analyses one decay in the whole of <paramref name="h"/>, e.g. one octave band.</summary>
+    public static DecayAnalysis Analyse(double[] h, int sampleRate)
+    {
+        int count = h.Length;
+        int window = Math.Max(1, (int)Math.Round(EnvelopeWindowSeconds * sampleRate));
+        if (count < 10 * window)
+            throw new ArgumentException($"Need at least {10 * EnvelopeWindowSeconds:0.0} s to analyse a decay.", nameof(h));
 
         int onset = FindOnset(h);
         double[] envelope = Envelope(h, window);
