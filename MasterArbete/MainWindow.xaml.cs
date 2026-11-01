@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -14,6 +15,11 @@ public partial class MainWindow : Window
     private readonly MediaPlayer _player = new();
     private string? _currentFilePath;
     private string? _playbackCopy;   // temporary little-endian copy of a RIFX file, deleted when no longer needed
+
+    // Channel 0 of the open file in pascals, or null if the file isn't
+    // calibrated (or couldn't be read). Used for the background-noise measurement.
+    private float[]? _pressure;
+    private int _sampleRate;
 
     public MainWindow()
     {
@@ -56,7 +62,8 @@ public partial class MainWindow : Window
             ChunksText.Text = "Chunks: " + string.Join(", ",
                 info.Chunks.Select(c => $"{c.Id.TrimEnd()} ({c.Size:N0} B)"));
             ShowSwelInfo(info);
-            ShowWaveform(path, info);
+            float[]? samples = ShowWaveform(path, info);
+            SetUpNoiseMeasurement(info, samples);
 
             bool canPlay = OpenForPlayback(path, info);
             PlayButton.IsEnabled = canPlay;
@@ -111,7 +118,8 @@ public partial class MainWindow : Window
 
     // A waveform problem (e.g. an unsupported sample type) shouldn't stop the
     // file from opening and playing, so it's reported in the status line instead.
-    private void ShowWaveform(string path, WavInfo info)
+    // Returns the samples of channel 0, or null if they couldn't be read.
+    private float[]? ShowWaveform(string path, WavInfo info)
     {
         try
         {
@@ -121,15 +129,87 @@ public partial class MainWindow : Window
                 ? (range.Min / info.FullScale, range.Max / info.FullScale)
                 : null;
 
-            Waveform.SetSamples(WavFileReader.ReadSamples(path, info), info.SampleRate,
+            float[] samples = WavFileReader.ReadSamples(path, info);
+            Waveform.SetSamples(samples, info.SampleRate,
                 sampleRange, info.Swel?.GetView(0), info.Swel?.GetViewUnit(0));
+            return samples;
         }
         catch (Exception ex)
         {
             Waveform.Clear();
             AppendStatus($"Couldn't draw the waveform: {ex.Message}");
+            return null;
         }
     }
+
+    // Background noise needs levels in dB SPL, so it can only be measured in
+    // a calibrated file (one whose swel "view" is in Pa).
+    private void SetUpNoiseMeasurement(WavInfo info, float[]? samples)
+    {
+        var calibration = PressureCalibration.FromHeader(info);
+        _pressure = samples != null ? calibration?.ToPascal(samples, info) : null;
+        _sampleRate = info.SampleRate;
+
+        bool canMeasure = _pressure != null;
+        NoiseFromBox.IsEnabled = NoiseToBox.IsEnabled = MeasureNoiseButton.IsEnabled = canMeasure;
+        NoiseFromBox.Text = canMeasure ? "0" : "";
+        NoiseToBox.Text = canMeasure ? (_pressure!.Length / (double)_sampleRate).ToString("0.00", CultureInfo.CurrentCulture) : "";
+        NoiseResultText.Text = canMeasure
+            ? "Enter the part of the recording that is only background noise, then press Measure."
+            : samples == null
+                ? "The samples couldn't be read."
+                : "This file isn't calibrated (its swel \"view\" isn't in Pa), so levels in dB SPL can't be calculated.";
+    }
+
+    private void MeasureNoiseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pressure == null) return;
+
+        if (!TryParseSeconds(NoiseFromBox.Text, out double from) || !TryParseSeconds(NoiseToBox.Text, out double to))
+        {
+            NoiseResultText.Text = "Enter the start and end in seconds, e.g. 12.5.";
+            return;
+        }
+
+        double duration = _pressure.Length / (double)_sampleRate;
+        from = Math.Clamp(from, 0, duration);
+        to = Math.Clamp(to, 0, duration);
+        int start = (int)Math.Round(from * _sampleRate);
+        int end = (int)Math.Round(to * _sampleRate);
+        if (end - start < BackgroundNoise.MinSamples)
+        {
+            NoiseResultText.Text = $"The part to measure must be at least " +
+                $"{BackgroundNoise.MinSamples / (double)_sampleRate:0.00} s long, and end after it starts.";
+            return;
+        }
+
+        var levels = BackgroundNoise.Measure(_pressure, _sampleRate, start, end - start);
+        NoiseResultText.Text = FormatNoiseResult(levels, from, to);
+    }
+
+    private static string FormatNoiseResult(NoiseLevels levels, double from, double to)
+    {
+        var culture = CultureInfo.CurrentCulture;
+        var lines = new List<string>
+        {
+            string.Format(culture, "LAeq  {0,5:0.0} dBA", levels.LAeq),
+            string.Format(culture, "LCeq  {0,5:0.0} dBC", levels.LCeq),
+            string.Format(culture, "LZeq  {0,5:0.0} dB (unweighted)", levels.LZeq),
+            string.Format(culture, "over {0:0.00}–{1:0.00} s ({2:0.00} s)", from, to, levels.DurationSeconds),
+            "",
+            "LOJ Kravnivå   limit              result",
+        };
+        foreach (var limit in BackgroundNoise.LojLimits)
+        {
+            lines.Add(string.Format(culture, "{0,-14} <{1} dBA, <{2} dBC   {3}",
+                limit.Level, limit.MaxDbA, limit.MaxDbC, limit.IsMetBy(levels) ? "meets" : "fails"));
+        }
+        return string.Join("\n", lines);
+    }
+
+    // Accepts both "12.5" and "12,5", since Swedish Windows uses a decimal comma.
+    private static bool TryParseSeconds(string text, out double seconds) =>
+        double.TryParse(text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out seconds);
 
     // Windows can't play RIFX (big-endian) files, so those are played from a
     // temporary little-endian copy. Like the waveform, a problem here shouldn't
@@ -186,6 +266,10 @@ public partial class MainWindow : Window
         ChunksText.Text = "Chunks: -";
         SwelText.Text = "swel: -";
         SwelFieldsText.Visibility = Visibility.Collapsed;
+
+        _pressure = null;
+        NoiseFromBox.IsEnabled = NoiseToBox.IsEnabled = MeasureNoiseButton.IsEnabled = false;
+        NoiseFromBox.Text = NoiseToBox.Text = NoiseResultText.Text = "";
     }
 
     // Play starts from the current position: the beginning after Stop, or

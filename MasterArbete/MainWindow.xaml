@@ -42,10 +42,12 @@
         <TextBlock x:Name="StatusText" Grid.Row="3" Margin="0,8,0,0"
                    Foreground="Red" TextWrapping="Wrap"/>
 
-        <!-- File info: standard WAV info on the left, Soundswell header on the right -->
+        <!-- File info: standard WAV info on the left, Soundswell header in the middle,
+             background-noise measurement on the right -->
         <Border Grid.Row="4" Margin="0,8,0,0" BorderBrush="#CCC" BorderThickness="1" Padding="12">
             <Grid>
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
@@ -68,6 +70,23 @@
                              BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
                              MaxHeight="180" VerticalScrollBarVisibility="Auto"
                              Visibility="Collapsed"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Margin="16,0,0,0">
+                    <TextBlock Text="Background noise" FontWeight="Bold" Margin="0,0,0,8"/>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="From" VerticalAlignment="Center"/>
+                        <TextBox x:Name="NoiseFromBox" Width="60" Margin="6,0,0,0" IsEnabled="False"/>
+                        <TextBlock Text="to" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                        <TextBox x:Name="NoiseToBox" Width="60" Margin="6,0,0,0" IsEnabled="False"/>
+                        <TextBlock Text="s" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                        <Button x:Name="MeasureNoiseButton" Content="Measure" Width="76" Height="24"
+                                Margin="10,0,0,0" Click="MeasureNoiseButton_Click" IsEnabled="False"/>
+                    </StackPanel>
+                    <!-- A read-only TextBox rather than a TextBlock, so the results can be copied -->
+                    <TextBox x:Name="NoiseResultText" FontFamily="Consolas" IsReadOnly="True"
+                             BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
+                             Margin="0,8,0,0"/>
                 </StackPanel>
             </Grid>
         </Border>
