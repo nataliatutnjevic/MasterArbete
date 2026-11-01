@@ -69,7 +69,21 @@ public class SchroederDecayTests
         Assert.InRange(result.DynamicRangeDb, 35, 45);
         Assert.True(result.T20IsReliable);
         Assert.False(result.T30IsReliable);
-        AssertScatter(t, 45, r => r.T20, "T20", 0.015, 0.045);
+        AssertScatter(t, 45, r => r.T20, "T20", 0.01, 0.045);
+
+        // Lundeby's correction and the noise subtraction keep T30 unbiased
+        // too, even if ISO wouldn't call it reliable here.
+        AssertScatter(t, 45, r => r.T30, "T30", 0.01, 0.03);
+    }
+
+    [Theory]
+    [InlineData(0.10)]
+    [InlineData(0.30)]
+    [InlineData(0.60)]
+    public void With_noise_30_dB_down_T20_is_still_close(double t)
+    {
+        // Only 30 dB above the noise: the fit range ends just 5 dB above it.
+        AssertScatter(t, 30, r => r.T20, "T20", 0.03, 0.06);
     }
 
     [Fact]

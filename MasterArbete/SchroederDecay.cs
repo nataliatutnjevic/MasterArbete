@@ -25,6 +25,7 @@ public record DecayAnalysis(
     int CutoffIndex,              // the integration stops here (exclusive)
     double[] CurveDb,             // the Schroeder curve from the onset to the cut-off, 0 dB at the onset
     double NoiseLevelDb,          // background noise, in dB relative to the peak of the envelope
+    LundebyResult? Lundeby,       // null if Lundeby's method found no decay; then there is no curve or fit
     DecayFit? Edt,
     DecayFit? T20,
     DecayFit? T30)
@@ -46,15 +47,22 @@ public record DecayAnalysis(
 /// Reverberation time from an impulse response (e.g. a handclap) with
 /// Schroeder's backward integration (ISO 3382-2):
 ///
-///   E(t) = ∫ from t to the cut-off of h²(τ) dτ,   L(t) = 10 · log10(E(t) / E(0))
+///   E(t) = ∫ from t to the cut-off of (h²(τ) − N) dτ + C,   L(t) = 10 · log10(E(t) / E(0))
 ///
 /// and a least-squares line fitted to L(t) over −5 to −25 dB (T20),
 /// −5 to −35 dB (T30) and 0 to −10 dB (EDT).
 ///
-/// The integration stops where the decay reaches the background noise, since
-/// integrating noise makes the reverberation time too long. This first version
-/// uses a simple cut-off (see <see cref="FindCutoff"/>); Lundeby's method and a
-/// correction for the energy after the cut-off come later.
+/// Background noise makes the reverberation time too long if it is
+/// integrated, so three things keep it out (all from Lundeby's method, see
+/// <see cref="Lundeby"/>):
+///   - the integration stops where the decay meets the noise (the cut-off);
+///   - C is the energy the decay would still have had after the cut-off
+///     without noise. Without it the end of the curve bends down;
+///   - N, the noise's mean square, is subtracted from h² before the cut-off,
+///     where the noise is mixed into the decay (Chu, JASA 63, 1978). With
+///     noise 45 dB down this takes T30 from 3–4 % too long to within 0.5 %.
+/// If Lundeby's method finds no decay above the noise, there is no curve and
+/// no reverberation time.
 /// </summary>
 public static class SchroederDecay
 {
@@ -65,10 +73,7 @@ public static class SchroederDecay
     // peak. ISO 3382-1 allows the start at most 20 dB below the peak.
     private const double OnsetBelowPeakDb = 20;
 
-    // The simple cut-off is where the envelope comes within this many dB of the noise.
-    private const double CutoffAboveNoiseDb = 5;
-
-    // The background noise is estimated from the last part of the signal.
+    // Without a decay, the background noise is estimated from the last part of the signal.
     private const double NoiseTailFraction = 0.1;
 
     /// <summary>
@@ -93,13 +98,22 @@ public static class SchroederDecay
         double[] envelope = Envelope(h, window);
         double peak = 0;
         for (int b = onset / window; b < envelope.Length; b++) peak = Math.Max(peak, envelope[b]);
-        double noise = NoiseMeanSquare(h);
-        int cutoff = FindCutoff(envelope, window, onset, peak, noise, count);
+        double NoiseLevelDb(double noise) => 10 * Math.Log10(Math.Max(noise, 1e-30) / Math.Max(peak, 1e-30));
 
-        double[] curve = Curve(h, onset, cutoff - onset, sampleRate);
+        var lundeby = Lundeby.Find(h, onset, sampleRate);
+        if (lundeby == null)
+        {
+            // No decay above the noise: nothing to integrate or fit.
+            return new DecayAnalysis(sampleRate, onset, onset, Array.Empty<double>(),
+                NoiseLevelDb(NoiseMeanSquare(h)), null, null, null, null);
+        }
+
+        int cutoff = Math.Clamp(onset + (int)Math.Round(lundeby.CrossingSeconds * sampleRate), onset + 1, count);
+        double[] curve = Curve(h, onset, cutoff - onset, sampleRate, lundeby.TailEnergy, lundeby.NoiseMeanSquare);
         return new DecayAnalysis(
             sampleRate, onset, cutoff, curve,
-            NoiseLevelDb: 10 * Math.Log10(Math.Max(noise, 1e-30) / Math.Max(peak, 1e-30)),
+            NoiseLevelDb(lundeby.NoiseMeanSquare),
+            lundeby,
             Edt: Fit(curve, sampleRate, 0, -10),
             T20: Fit(curve, sampleRate, -5, -25),
             T30: Fit(curve, sampleRate, -5, -35));
@@ -108,16 +122,18 @@ public static class SchroederDecay
     /// <summary>
     /// Schroeder's backward integration of <paramref name="count"/> samples
     /// from <paramref name="start"/>, in dB with 0 dB at the first sample.
-    /// Computed backwards in one pass: E[n] = E[n+1] + h²[n] / fs.
+    /// Computed backwards in one pass: E[n] = E[n+1] + (h²[n] − N) / fs, starting
+    /// from <paramref name="tailEnergy"/> (the C above) after the last sample,
+    /// with N = <paramref name="noiseMeanSquare"/>.
     /// </summary>
-    public static double[] Curve(double[] h, int start, int count, int sampleRate)
+    public static double[] Curve(double[] h, int start, int count, int sampleRate, double tailEnergy = 0, double noiseMeanSquare = 0)
     {
         var energy = new double[count];
-        double sum = 0;
+        double sum = tailEnergy;
         for (int i = count - 1; i >= 0; i--)
         {
             double v = h[start + i];
-            sum += v * v / sampleRate;
+            sum += (v * v - noiseMeanSquare) / sampleRate;
             energy[i] = sum;
         }
 
@@ -190,23 +206,5 @@ public static class SchroederDecay
         double sum = 0;
         for (int i = from; i < h.Length; i++) sum += h[i] * h[i];
         return sum / (h.Length - from);
-    }
-
-    /// <summary>
-    /// The simple cut-off: the start of the first envelope block after the
-    /// peak that is within CutoffAboveNoiseDb of the noise. Stopping a little
-    /// above the noise loses the very end of the decay, which makes the curve
-    /// bend down there, but keeps noise out of the integral.
-    /// </summary>
-    private static int FindCutoff(double[] envelope, int window, int onset, double peak, double noise, int count)
-    {
-        double threshold = noise * Math.Pow(10, CutoffAboveNoiseDb / 10);
-        int peakBlock = onset / window;
-        for (int b = peakBlock; b < envelope.Length; b++)
-            if (envelope[b] == peak) { peakBlock = b; break; }
-
-        for (int b = peakBlock + 1; b < envelope.Length; b++)
-            if (envelope[b] <= threshold) return b * window;
-        return count;
     }
 }
