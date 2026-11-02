@@ -28,6 +28,8 @@ public partial class MainWindow : Window
     private float[]? _samples;
     private double _reverbStartSeconds;   // where the analysed stretch starts, for the decay plot's time axis
     private const double MinReverbSeconds = 0.1;   // SchroederDecay needs at least ten 10 ms intervals
+    // The LOJ limits start at 250 Hz, and a handclap has too little energy at 125 Hz to measure it anyway.
+    private const double LowestReverbBandHz = 250;
 
     public MainWindow()
     {
@@ -264,7 +266,9 @@ public partial class MainWindow : Window
 
             string? selectedBand = (ReverbTable.SelectedItem as ReverbRow)?.Band;
             var rows = new[] { ReverbRow.From("Broadband", result.Broadband) }
-                .Concat(result.Bands.Select(b => ReverbRow.From(b.Band.Name, b.Decay)))
+                .Concat(result.Bands
+                    .Where(b => b.Band.NominalHz >= LowestReverbBandHz)
+                    .Select(b => ReverbRow.From(b.Band.Name, b.Decay)))
                 .ToList();
             _reverbStartSeconds = from;
             ReverbTable.ItemsSource = rows;

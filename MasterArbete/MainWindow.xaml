@@ -123,8 +123,7 @@
                     </Border>
 
                     <DockPanel Grid.Row="1" Grid.Column="1" Margin="12,0,0,0" Width="480">
-                        <TextBlock DockPanel.Dock="Bottom" TextWrapping="Wrap" Foreground="#555" Margin="0,8,0,0" FontSize="11"
-                                   Text="Click a row to see its decay. (…) = not reliable: the decay is less than 35 dB (T20) or 45 dB (T30) above the noise (ISO 3382). – = no result. Range = dynamic range. C = curvature, 100·(T30/T20 − 1). ξ = non-linearity of T20, 1000·(1 − r²)."/>
+                        <TextBlock DockPanel.Dock="Top" Text="Click a row to see its decay." Margin="0,0,0,6"/>
                         <DataGrid x:Name="ReverbTable" AutoGenerateColumns="False" IsReadOnly="True"
                                   SelectionMode="Single" HeadersVisibility="Column" CanUserSortColumns="False"
                                   CanUserReorderColumns="False" GridLinesVisibility="Horizontal"
