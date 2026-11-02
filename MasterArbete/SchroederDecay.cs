@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 
 namespace MasterArbete;
 
@@ -24,6 +25,8 @@ public record DecayAnalysis(
     int OnsetIndex,               // first sample of the decay, in the analysed signal
     int CutoffIndex,              // the integration stops here (exclusive)
     double[] CurveDb,             // the Schroeder curve from the onset to the cut-off, 0 dB at the onset
+    double[] EnvelopeDb,          // mean square in consecutive 10 ms intervals from the start, in dB relative to the peak (for plotting)
+    double EnvelopeIntervalSeconds,
     double NoiseLevelDb,          // background noise, in dB relative to the peak of the envelope
     LundebyResult? Lundeby,       // null if Lundeby's method found no decay; then there is no curve or fit
     DecayFit? Edt,
@@ -104,21 +107,23 @@ public static class SchroederDecay
         double[] envelope = Envelope(h, window);
         double peak = 0;
         for (int b = onset / window; b < envelope.Length; b++) peak = Math.Max(peak, envelope[b]);
-        double NoiseLevelDb(double noise) => 10 * Math.Log10(Math.Max(noise, 1e-30) / Math.Max(peak, 1e-30));
+        double ToDb(double meanSquare) => 10 * Math.Log10(Math.Max(meanSquare, 1e-30) / Math.Max(peak, 1e-30));
+        double[] envelopeDb = envelope.Select(ToDb).ToArray();
+        double interval = (double)window / sampleRate;
 
         var lundeby = Lundeby.Find(h, onset, sampleRate);
         if (lundeby == null)
         {
             // No decay above the noise: nothing to integrate or fit.
-            return new DecayAnalysis(sampleRate, onset, onset, Array.Empty<double>(),
-                NoiseLevelDb(NoiseMeanSquare(h)), null, null, null, null);
+            return new DecayAnalysis(sampleRate, onset, onset, Array.Empty<double>(), envelopeDb, interval,
+                ToDb(NoiseMeanSquare(h)), null, null, null, null);
         }
 
         int cutoff = Math.Clamp(onset + (int)Math.Round(lundeby.CrossingSeconds * sampleRate), onset + 1, count);
         double[] curve = Curve(h, onset, cutoff - onset, sampleRate, lundeby.TailEnergy, lundeby.NoiseMeanSquare);
         return new DecayAnalysis(
-            sampleRate, onset, cutoff, curve,
-            NoiseLevelDb(lundeby.NoiseMeanSquare),
+            sampleRate, onset, cutoff, curve, envelopeDb, interval,
+            ToDb(lundeby.NoiseMeanSquare),
             lundeby,
             Edt: Fit(curve, sampleRate, 0, -10),
             T20: Fit(curve, sampleRate, -5, -25),

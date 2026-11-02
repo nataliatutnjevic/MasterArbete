@@ -2,7 +2,9 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Win32;
 
@@ -20,6 +22,12 @@ public partial class MainWindow : Window
     // calibrated (or couldn't be read). Used for the background-noise measurement.
     private float[]? _pressure;
     private int _sampleRate;
+
+    // Channel 0 of the open file as read (-1..1), for the reverberation time,
+    // which doesn't need calibration. Null if the samples couldn't be read.
+    private float[]? _samples;
+    private double _reverbStartSeconds;   // where the analysed stretch starts, for the decay plot's time axis
+    private const double MinReverbSeconds = 0.1;   // SchroederDecay needs at least ten 10 ms intervals
 
     public MainWindow()
     {
@@ -64,6 +72,7 @@ public partial class MainWindow : Window
             ShowSwelInfo(info);
             float[]? samples = ShowWaveform(path, info);
             SetUpNoiseMeasurement(info, samples);
+            SetUpReverbAnalysis(samples);
 
             bool canPlay = OpenForPlayback(path, info);
             PlayButton.IsEnabled = canPlay;
@@ -207,6 +216,81 @@ public partial class MainWindow : Window
         return string.Join("\n", lines);
     }
 
+    // The reverberation time only depends on how fast the level falls, so it
+    // works on any recording, calibrated or not.
+    private void SetUpReverbAnalysis(float[]? samples)
+    {
+        _samples = samples;
+        bool canAnalyse = samples != null;
+        ReverbFromBox.IsEnabled = ReverbToBox.IsEnabled = AnalyseReverbButton.IsEnabled = canAnalyse;
+        ReverbFromBox.Text = canAnalyse ? "0" : "";
+        ReverbToBox.Text = canAnalyse ? (samples!.Length / (double)_sampleRate).ToString("0.00", CultureInfo.CurrentCulture) : "";
+        ReverbStatusText.Text = canAnalyse ? "" : "The samples couldn't be read.";
+        ReverbTable.ItemsSource = null;
+        DecayCurve.Clear();
+    }
+
+    private async void AnalyseReverbButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_samples is not { } samples) return;
+
+        if (!TryParseSeconds(ReverbFromBox.Text, out double from) || !TryParseSeconds(ReverbToBox.Text, out double to))
+        {
+            ReverbStatusText.Text = "Enter the start and end in seconds, e.g. 12.5.";
+            return;
+        }
+
+        int sampleRate = _sampleRate;
+        double duration = samples.Length / (double)sampleRate;
+        from = Math.Clamp(from, 0, duration);
+        to = Math.Clamp(to, 0, duration);
+        int start = (int)Math.Round(from * sampleRate);
+        int count = (int)Math.Round(to * sampleRate) - start;
+        if (count < MinReverbSeconds * sampleRate)
+        {
+            ReverbStatusText.Text = $"The stretch must be at least {MinReverbSeconds:0.0} s long, and end after it starts.";
+            return;
+        }
+
+        // Filtering a long stretch into all the bands takes a moment, so it
+        // runs in the background and the window stays responsive.
+        bool timeReversed = TimeReversedBox.IsChecked == true;
+        AnalyseReverbButton.IsEnabled = false;
+        ReverbStatusText.Text = "Analysing…";
+        try
+        {
+            var result = await Task.Run(() => ReverberationAnalysis.Analyse(samples, sampleRate, start, count, timeReversed));
+            if (!ReferenceEquals(samples, _samples)) return;   // another file was opened in the meantime
+
+            string? selectedBand = (ReverbTable.SelectedItem as ReverbRow)?.Band;
+            var rows = new[] { ReverbRow.From("Broadband", result.Broadband) }
+                .Concat(result.Bands.Select(b => ReverbRow.From(b.Band.Name, b.Decay)))
+                .ToList();
+            _reverbStartSeconds = from;
+            ReverbTable.ItemsSource = rows;
+            // Keep showing the same band after a new analysis, the 1 kHz band at first.
+            ReverbTable.SelectedItem = rows.FirstOrDefault(r => r.Band == selectedBand)
+                ?? rows.FirstOrDefault(r => r.Band == "1 kHz") ?? rows[0];
+
+            ReverbStatusText.Text = string.Format(CultureInfo.CurrentCulture, "Analysed {0:0.00}–{1:0.00} s{2}.",
+                from, to, timeReversed ? ", time-reversed band filters" : "");
+        }
+        catch (Exception ex)
+        {
+            ReverbStatusText.Text = $"Couldn't analyse: {ex.Message}";
+        }
+        finally
+        {
+            AnalyseReverbButton.IsEnabled = _samples != null;
+        }
+    }
+
+    private void ReverbTable_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ReverbTable.SelectedItem is ReverbRow row)
+            DecayCurve.Show(row.Decay, row.Band, _reverbStartSeconds);
+    }
+
     // Accepts both "12.5" and "12,5", since Swedish Windows uses a decimal comma.
     private static bool TryParseSeconds(string text, out double seconds) =>
         double.TryParse(text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out seconds);
@@ -270,6 +354,12 @@ public partial class MainWindow : Window
         _pressure = null;
         NoiseFromBox.IsEnabled = NoiseToBox.IsEnabled = MeasureNoiseButton.IsEnabled = false;
         NoiseFromBox.Text = NoiseToBox.Text = NoiseResultText.Text = "";
+
+        _samples = null;
+        ReverbFromBox.IsEnabled = ReverbToBox.IsEnabled = AnalyseReverbButton.IsEnabled = false;
+        ReverbFromBox.Text = ReverbToBox.Text = ReverbStatusText.Text = "";
+        ReverbTable.ItemsSource = null;
+        DecayCurve.Clear();
     }
 
     // Play starts from the current position: the beginning after Stop, or
@@ -297,5 +387,28 @@ public partial class MainWindow : Window
         _player.Close();
         DeletePlaybackCopy();
         base.OnClosed(e);
+    }
+}
+
+/// <summary>One row of the reverberation table: a band's results as text.</summary>
+public record ReverbRow(string Band, string Edt, string T20, string T30, string DynamicRange,
+    string Curvature, string NonLinearity, DecayAnalysis Decay)
+{
+    public static ReverbRow From(string band, DecayAnalysis decay)
+    {
+        var culture = CultureInfo.CurrentCulture;
+        // A result ISO 3382 wouldn't trust is shown in parentheses.
+        string Time(DecayFit? fit, bool reliable) => fit == null ? "–"
+            : reliable ? fit.ReverberationTime.ToString("0.00", culture)
+            : "(" + fit.ReverberationTime.ToString("0.00", culture) + ")";
+
+        return new ReverbRow(band,
+            Time(decay.Edt, true),
+            Time(decay.T20, decay.T20IsReliable),
+            Time(decay.T30, decay.T30IsReliable),
+            decay.Lundeby == null ? "–" : decay.DynamicRangeDb.ToString("0", culture),
+            decay.CurvaturePercent is { } c ? (Math.Round(c) + 0.0).ToString("0", culture) : "–",   // + 0.0 turns −0 into 0
+            decay.T20?.NonLinearityPermille.ToString("0.0", culture) ?? "–",
+            decay);
     }
 }

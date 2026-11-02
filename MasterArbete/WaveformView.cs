@@ -203,7 +203,7 @@ public class WaveformView : FrameworkElement
     }
 
     /// <summary>Rounds up to 1, 2 or 5 times a power of ten (0.1, 0.2, 0.5, 1, 2, 5, 10, ...).</summary>
-    private static double NiceStep(double rawStep)
+    internal static double NiceStep(double rawStep)
     {
         if (rawStep <= 0) return 1;
         double magnitude = Math.Pow(10, Math.Floor(Math.Log10(rawStep)));
@@ -213,7 +213,7 @@ public class WaveformView : FrameworkElement
     }
 
     // How many decimals a label needs to show a step exactly (1 -> 0, 0.5 -> 1, 0.02 -> 2).
-    private static int Decimals(double step) =>
+    internal static int Decimals(double step) =>
         step >= 1 ? 0 : (int)Math.Ceiling(-Math.Log10(step) - 1e-9);
 
     private void DrawText(DrawingContext dc, string text, Point at, TextAlignment alignment) =>
