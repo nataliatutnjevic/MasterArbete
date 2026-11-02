@@ -13,23 +13,32 @@ pick a `.wav` file, see its basic format info, and play it back.
 ## Project layout
 
 ```
-MasterArbete/
-  MasterArbete.csproj   # WPF app, targets net8.0-windows
-  App.xaml / .cs        # application entry point
-  MainWindow.xaml / .cs  # the single window: browse, info panel, play/stop
-  WavFileReader.cs      # standalone RIFF/WAVE chunk parser (WavInfo + WavFileReader)
-  SwelHeader.cs         # parser for Soundswell's text header in the "swel" chunk
+MasterArbete.Analysis/       # the calculations, no user interface (net8.0)
+  WavFileReader.cs           # RIFF/WAVE chunk parser (WavInfo + WavFileReader)
+  SwelHeader.cs              # parser for Soundswell's text header in the "swel" chunk
+  PressureCalibration.cs     # sample values to pascals from the swel header
+  BackgroundNoise.cs, Fft.cs # background noise levels against the LOJ limits
+  SchroederDecay.cs          # Schroeder decay curve, EDT, T20, T30
+  Lundeby.cs                 # where the decay meets the background noise
+  OctaveBandFilter.cs        # octave-band filters
+  ReverberationAnalysis.cs   # reverberation time per octave band
+MasterArbete/                # WPF app (net8.0-windows)
+  MasterArbete.slnx          # the solution, with all three projects
+  App.xaml / .cs             # application entry point
+  MainWindow.xaml / .cs      # the window: file info, background noise, reverberation time
+  WaveformView.cs            # waveform plot
+  DecayCurveView.cs          # decay curve plot
+MasterArbete.Tests/          # xUnit tests of the calculations (net8.0)
 ```
 
-`WavFileReader.cs` has no dependency on the UI — it just takes a file path and
-returns a `WavInfo`. That's deliberate: it's the piece most likely to be
-reused or replaced later (e.g. if this gets wired up to a native audio
-engine such as Soundswell), so it's kept separate from the WPF-specific code.
+`MasterArbete.Analysis` has no dependency on WPF or Windows. That's
+deliberate: it's the part that could be built into other programs later,
+e.g. Soundswell, while the WPF app is only one user interface for it.
 
 ## Building and running
 
-This needs to be built on Windows — WPF is Windows-only, so it won't build
-here in this Linux environment. On your Windows machine, with the
+The app needs to be built on Windows, since WPF is Windows-only (the
+analysis library and the tests also build on macOS and Linux). With the
 [.NET 8 SDK](https://dotnet.microsoft.com/download) installed:
 
 ```powershell
@@ -37,7 +46,8 @@ cd MasterArbete
 dotnet run
 ```
 
-Or open `MasterArbete.csproj` in Visual Studio and press F5.
+Or open `MasterArbete/MasterArbete.slnx` in Visual Studio and press F5.
+Run the tests with `dotnet test MasterArbete.Tests`.
 
 ## Next steps
 

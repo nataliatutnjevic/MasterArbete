@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The calculations, without any user interface: reading WAV files and
+       Soundswell headers, reverberation time and background noise. Plain
+       .NET, so it runs on Windows, macOS and Linux and can be used by other
+       programs than the WPF app. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>MasterArbete</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

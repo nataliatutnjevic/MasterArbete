@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="MasterArbete.csproj" />
+  <Project Path="../MasterArbete.Analysis/MasterArbete.Analysis.csproj" />
   <Project Path="../MasterArbete.Tests/MasterArbete.Tests.csproj" />
 </Solution>
