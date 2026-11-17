@@ -1,6 +1,6 @@
 # MasterArbete — WAV file prototype
 
-A minimal Windows desktop app (WPF, .NET 8) for the first step of the project:
+A minimal Windows desktop app (WPF, .NET 10) for the first step of the project:
 pick a `.wav` file, see its basic format info, and play it back.
 
 ## What it does
@@ -13,7 +13,7 @@ pick a `.wav` file, see its basic format info, and play it back.
 ## Project layout
 
 ```
-MasterArbete.Analysis/       # the calculations, no user interface (net8.0)
+MasterArbete.Analysis/       # the calculations, no user interface (net10.0)
   WavFileReader.cs           # RIFF/WAVE chunk parser (WavInfo + WavFileReader)
   SwelHeader.cs              # parser for Soundswell's text header in the "swel" chunk
   PressureCalibration.cs     # sample values to pascals from the swel header
@@ -22,13 +22,13 @@ MasterArbete.Analysis/       # the calculations, no user interface (net8.0)
   Lundeby.cs                 # where the decay meets the background noise
   OctaveBandFilter.cs        # octave-band filters
   ReverberationAnalysis.cs   # reverberation time per octave band
-MasterArbete/                # WPF app (net8.0-windows)
+MasterArbete/                # WPF app (net10.0-windows)
   MasterArbete.slnx          # the solution, with all three projects
   App.xaml / .cs             # application entry point
   MainWindow.xaml / .cs      # the window: file info, background noise, reverberation time
   WaveformView.cs            # waveform plot
   DecayCurveView.cs          # decay curve plot
-MasterArbete.Tests/          # xUnit tests of the calculations (net8.0)
+MasterArbete.Tests/          # xUnit tests of the calculations (net10.0)
 ```
 
 `MasterArbete.Analysis` has no dependency on WPF or Windows. That's
@@ -39,7 +39,7 @@ e.g. Soundswell, while the WPF app is only one user interface for it.
 
 The app needs to be built on Windows, since WPF is Windows-only (the
 analysis library and the tests also build on macOS and Linux). With the
-[.NET 8 SDK](https://dotnet.microsoft.com/download) installed:
+[.NET 10 SDK](https://dotnet.microsoft.com/download) installed:
 
 ```powershell
 cd MasterArbete
