@@ -10,8 +10,8 @@ namespace MasterArbete;
 /// Draws one decay analysis: level in dB over time, with
 ///   - the energy envelope (10 ms averages) in grey,
 ///   - the Schroeder curve in blue,
-///   - the lines fitted for EDT, T20 and T30, thick over the range each is
-///     fitted on and thin where they are extended,
+///   - the line fitted for T20, thick over the range it is fitted on
+///     (−5 to −25 dB) and thin where it is extended,
 ///   - the background noise level and the cut-off point (Lundeby) in red.
 /// The time axis is in seconds from the start of the file.
 /// </summary>
@@ -28,12 +28,8 @@ public class DecayCurveView : FrameworkElement
     private static readonly Brush NoiseBrush = MakeBrush(Color.FromRgb(0xB2, 0x22, 0x22));
     private static readonly Brush LabelBrush = MakeBrush(Color.FromRgb(0x44, 0x44, 0x44));
 
-    private static readonly (string Name, Color Color)[] FitStyles =
-    {
-        ("EDT", Color.FromRgb(0xE0, 0x80, 0x00)),
-        ("T20", Color.FromRgb(0x2E, 0x8B, 0x57)),
-        ("T30", Color.FromRgb(0x93, 0x70, 0xDB)),
-    };
+    // Only T20 is drawn, since the LOJ limits are on T20 (EDT and T30 are still calculated).
+    private static readonly Color T20Color = Color.FromRgb(0x2E, 0x8B, 0x57);
 
     private DecayAnalysis? _decay;
     private string _title = "";
@@ -103,16 +99,13 @@ public class DecayCurveView : FrameworkElement
                 curve.Add(new Point(X(onset + (double)i / decay.SampleRate), Y(decay.CurveDb[i])));
         DrawPolyline(dc, CurvePen, curve);
 
-        // Fitted lines. The curve's time starts at the onset.
-        var fits = new[] { decay.Edt, decay.T20, decay.T30 };
-        for (int f = 0; f < fits.Length; f++)
+        // The T20 line. The curve's time starts at the onset.
+        if (decay.T20 is { } fit)
         {
-            if (fits[f] is not { } fit) continue;
-            var color = FitStyles[f].Color;
             double TimeAt(double db) => onset + (db - fit.InterceptDb) / fit.SlopeDbPerSecond;
-            dc.DrawLine(MakePen(color, 1, dashed: true),
+            dc.DrawLine(MakePen(T20Color, 1, dashed: true),
                 new Point(X(onset), Y(fit.InterceptDb)), new Point(X(TimeAt(bottomDb)), Y(bottomDb)));
-            dc.DrawLine(MakePen(color, 3),
+            dc.DrawLine(MakePen(T20Color, 3),
                 new Point(X(TimeAt(fit.FromDb)), Y(fit.FromDb)), new Point(X(TimeAt(fit.ToDb)), Y(fit.ToDb)));
         }
         dc.Pop();
@@ -156,14 +149,10 @@ public class DecayCurveView : FrameworkElement
         if (decay.Lundeby == null)
             lines.Add(("No decay above the background noise", NoiseBrush));
 
-        var fits = new[] { decay.Edt, decay.T20, decay.T30 };
-        var reliable = new[] { true, decay.T20IsReliable, decay.T30IsReliable };
-        for (int f = 0; f < fits.Length; f++)
+        if (decay.T20 is { } fit)
         {
-            if (fits[f] is not { } fit) continue;
-            string note = reliable[f] ? "" : "  (not reliable)";
-            lines.Add(($"{FitStyles[f].Name} = {fit.ReverberationTime:0.00} s  ({fit.FromDb:0} to {fit.ToDb:0} dB){note}",
-                MakeBrush(FitStyles[f].Color)));
+            string note = decay.T20IsReliable ? "" : "  (not reliable)";
+            lines.Add(($"T20 = {fit.ReverberationTime:0.00} s  ({fit.FromDb:0} to {fit.ToDb:0} dB){note}", MakeBrush(T20Color)));
         }
         lines.Add(($"dynamic range {decay.DynamicRangeDb:0.0} dB", LabelBrush));
 

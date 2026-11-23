@@ -646,8 +646,12 @@ public partial class MainWindow : Window
     }
 }
 
-/// <summary>One row of the reverberation table: a band's results as text.</summary>
-public record ReverbRow(string Band, string Edt, string T20, string T30, string DynamicRange,
+/// <summary>
+/// One row of the reverberation table: a band's results as text. Only T20 is
+/// shown, since the LOJ limits are on T20; C still uses T30, as a check that
+/// the decay is straight enough for T20 to describe it.
+/// </summary>
+public record ReverbRow(string Band, string T20, string DynamicRange,
     string Curvature, string NonLinearity, DecayAnalysis Decay)
 {
     public static ReverbRow From(string band, DecayAnalysis decay)
@@ -659,9 +663,7 @@ public record ReverbRow(string Band, string Edt, string T20, string T30, string 
             : "(" + fit.ReverberationTime.ToString("0.00", culture) + ")";
 
         return new ReverbRow(band,
-            Time(decay.Edt, true),
             Time(decay.T20, decay.T20IsReliable),
-            Time(decay.T30, decay.T30IsReliable),
             decay.Lundeby == null ? "–" : decay.DynamicRangeDb.ToString("0", culture),
             decay.CurvaturePercent is { } c ? (Math.Round(c) + 0.0).ToString("0", culture) : "–",   // + 0.0 turns −0 into 0
             decay.T20?.NonLinearityPermille.ToString("0.0", culture) ?? "–",

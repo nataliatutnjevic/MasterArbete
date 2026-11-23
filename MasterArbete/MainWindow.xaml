@@ -146,9 +146,7 @@
                                   SelectionChanged="ReverbTable_SelectionChanged">
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="Band" Binding="{Binding Band}" Width="80"/>
-                                <DataGridTextColumn Header="EDT (s)" Binding="{Binding Edt}" Width="*"/>
                                 <DataGridTextColumn Header="T20 (s)" Binding="{Binding T20}" Width="*" FontWeight="Bold"/>
-                                <DataGridTextColumn Header="T30 (s)" Binding="{Binding T30}" Width="*"/>
                                 <DataGridTextColumn Header="Range (dB)" Binding="{Binding DynamicRange}" Width="1.3*"/>
                                 <DataGridTextColumn Header="C (%)" Binding="{Binding Curvature}" Width="*"/>
                                 <DataGridTextColumn Header="ξ (‰)" Binding="{Binding NonLinearity}" Width="*"/>
