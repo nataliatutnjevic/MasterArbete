@@ -29,7 +29,7 @@ public partial class MainWindow : Window
     private double _reverbStartSeconds;   // where the analysed stretch starts, for the decay plot's time axis
     private const double MinReverbSeconds = 0.1;   // SchroederDecay needs at least ten 10 ms intervals
     // The LOJ limits start at 250 Hz, and a handclap has too little energy at 125 Hz to measure it anyway.
-    private const double LowestReverbBandHz = 250;
+    private const double LowestReverbBandHz = LojReverbLimit.LowestBandHz;
 
     public MainWindow()
     {
@@ -229,6 +229,7 @@ public partial class MainWindow : Window
         ReverbToBox.Text = canAnalyse ? (samples!.Length / (double)_sampleRate).ToString("0.00", CultureInfo.CurrentCulture) : "";
         ReverbStatusText.Text = canAnalyse ? "" : "The samples couldn't be read.";
         ReverbTable.ItemsSource = null;
+        LojReverbText.Text = "";
         DecayCurve.Clear();
     }
 
@@ -272,6 +273,7 @@ public partial class MainWindow : Window
                 .ToList();
             _reverbStartSeconds = from;
             ReverbTable.ItemsSource = rows;
+            LojReverbText.Text = FormatLojReverbResult(result);
             // Keep showing the same band after a new analysis, the 1 kHz band at first.
             ReverbTable.SelectedItem = rows.FirstOrDefault(r => r.Band == selectedBand)
                 ?? rows.FirstOrDefault(r => r.Band == "1 kHz") ?? rows[0];
@@ -287,6 +289,33 @@ public partial class MainWindow : Window
         {
             AnalyseReverbButton.IsEnabled = _samples != null;
         }
+    }
+
+    // One line per Kravnivå, naming the bands that decide a "fails" or "can't tell".
+    private static string FormatLojReverbResult(ReverberationResult result)
+    {
+        var culture = CultureInfo.CurrentCulture;
+        var lines = new List<string>
+        {
+            "LOJ Kravnivå (T20)  limit 250 Hz / ≥500 Hz   result",
+        };
+        foreach (var limit in LojReverbLimit.All)
+        {
+            var check = limit.Check(result);
+            string verdict = check.Verdict switch
+            {
+                LojVerdict.Meets => "meets",
+                LojVerdict.Fails => "fails: " + string.Join(", ", check.DecidingBands.Select(b =>
+                    string.Format(culture, "{0} {1:0.00} s", b.Band.Name, b.T20Seconds))),
+                _ => "can't tell: " + string.Join(", ", check.DecidingBands.Select(b => b.Band.Name))
+                    + " not reliable",
+            };
+            lines.Add(string.Format(culture, "{0,-19} <{1:0.00} s / <{2:0.00} s     {3}",
+                limit.Level, limit.MaxBelow500HzSeconds, limit.MaxFrom500HzSeconds, verdict));
+        }
+        lines.Add("");
+        lines.Add("Every band from 250 Hz up must be below its limit. A T20 in parentheses has under 35 dB of dynamic range and isn't trusted.");
+        return string.Join("\n", lines);
     }
 
     private void ReverbTable_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -363,6 +392,7 @@ public partial class MainWindow : Window
         ReverbFromBox.IsEnabled = ReverbToBox.IsEnabled = AnalyseReverbButton.IsEnabled = false;
         ReverbFromBox.Text = ReverbToBox.Text = ReverbStatusText.Text = "";
         ReverbTable.ItemsSource = null;
+        LojReverbText.Text = "";
         DecayCurve.Clear();
     }
 
