@@ -27,6 +27,8 @@ public partial class MainWindow : Window
     // which doesn't need calibration. Null if the samples couldn't be read.
     private float[]? _samples;
     private double _reverbStartSeconds;   // where the analysed stretch starts, for the decay plot's time axis
+    private (double From, double To)? _analysedReverbStretch;   // the From/To of the last analysis, null before one
+    private string _reverbAnalysedText = "";
     private const double MinReverbSeconds = 0.1;   // SchroederDecay needs at least ten 10 ms intervals
     // The LOJ limits start at 250 Hz, and a handclap has too little energy at 125 Hz to measure it anyway.
     private const double LowestReverbBandHz = LojReverbLimit.LowestBandHz;
@@ -72,6 +74,7 @@ public partial class MainWindow : Window
             _writingStretchBoxes = false;
         }
         UpdateCursorText();
+        UpdateReverbMarkers();
     }
 
     private void StretchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -101,6 +104,7 @@ public partial class MainWindow : Window
             Waveform.SetSelection(null, null);
         }
         UpdateCursorText();
+        UpdateReverbMarkers();
     }
 
     private void UpdateCursorText()
@@ -309,6 +313,7 @@ public partial class MainWindow : Window
     private void SetUpReverbAnalysis(float[]? samples)
     {
         _samples = samples;
+        _analysedReverbStretch = null;
         bool canAnalyse = samples != null;
         ReverbFromBox.IsEnabled = ReverbToBox.IsEnabled = AnalyseReverbButton.IsEnabled = canAnalyse;
         ReverbFromBox.Text = canAnalyse ? "0" : "";
@@ -358,14 +363,16 @@ public partial class MainWindow : Window
                     .Select(b => ReverbRow.From(b.Band.Name, b.Decay)))
                 .ToList();
             _reverbStartSeconds = from;
+            _analysedReverbStretch = (from, to);
+            _reverbAnalysedText = string.Format(CultureInfo.CurrentCulture, "Analysed {0:0.000}–{1:0.000} s{2}.",
+                from, to, timeReversed ? ", time-reversed band filters" : "");
+            ReverbStatusText.Text = _reverbAnalysedText;
             ReverbTable.ItemsSource = rows;
             LojReverbText.Text = FormatLojReverbResult(result);
             // Keep showing the same band after a new analysis, the 1 kHz band at first.
             ReverbTable.SelectedItem = rows.FirstOrDefault(r => r.Band == selectedBand)
                 ?? rows.FirstOrDefault(r => r.Band == "1 kHz") ?? rows[0];
-
-            ReverbStatusText.Text = string.Format(CultureInfo.CurrentCulture, "Analysed {0:0.00}–{1:0.00} s{2}.",
-                from, to, timeReversed ? ", time-reversed band filters" : "");
+            UpdateReverbMarkers();
         }
         catch (Exception ex)
         {
@@ -408,6 +415,52 @@ public partial class MainWindow : Window
     {
         if (ReverbTable.SelectedItem is ReverbRow row)
             DecayCurve.Show(row.Decay, row.Band, _reverbStartSeconds);
+        UpdateReverbMarkers();
+    }
+
+    private static readonly Color ClapStartColor = Color.FromRgb(0x2E, 0x6B, 0x2E);
+    private static readonly Color NoiseCutoffColor = Color.FromRgb(0xB2, 0x22, 0x22);   // as the cut-off in the decay plot
+
+    // Whether the Reverberation time tab's From/To are still the stretch that
+    // was analysed (to within half a millisecond, since the boxes show ms).
+    private bool ReverbStretchIsAnalysed()
+    {
+        if (_analysedReverbStretch is not { } analysed || _samples == null) return false;
+        if (!TryParseSeconds(ReverbFromBox.Text, out double from) || !TryParseSeconds(ReverbToBox.Text, out double to)) return false;
+        double duration = _samples.Length / (double)_sampleRate;
+        return Math.Abs(Math.Clamp(from, 0, duration) - analysed.From) < 0.0005
+            && Math.Abs(Math.Clamp(to, 0, duration) - analysed.To) < 0.0005;
+    }
+
+    // On the Reverberation time tab, marks on the waveform where the analysis
+    // of the band selected in the table found the clap and where the decay
+    // reached the noise (Lundeby's cut-off), so it's easy to see that it looked
+    // at the right thing. Once From/To change, the analysis no longer matches
+    // the stretch, so the marks go until Analyse is pressed again.
+    private void UpdateReverbMarkers()
+    {
+        if (Waveform == null || Tabs == null) return;   // during InitializeComponent
+        bool analysed = ReverbStretchIsAnalysed();
+        if (_analysedReverbStretch != null)
+            ReverbStatusText.Text = analysed ? _reverbAnalysedText : "From/To have changed since the analysis: press Analyse to update.";
+
+        if (Tabs.SelectedItem != ReverbTab || !analysed || ReverbTable.SelectedItem is not ReverbRow row)
+        {
+            Waveform.SetMarkers(null);
+            return;
+        }
+
+        // Both markers are times for the band picked in the table, so the label names the band first:
+        // "1 kHz band: decay starts", not "clap start (1 kHz)", which reads as if the clap were at 1 kHz.
+        var decay = row.Decay;
+        string band = row.Band == "Broadband" ? "Broadband" : $"{row.Band} band";
+        var markers = new List<WaveformMarker>
+        {
+            new(_reverbStartSeconds + decay.OnsetIndex / (double)decay.SampleRate, $"{band}: decay starts", ClapStartColor),
+        };
+        if (decay.Lundeby != null)
+            markers.Add(new(_reverbStartSeconds + decay.CutoffIndex / (double)decay.SampleRate, $"{band}: decay reaches the noise", NoiseCutoffColor));
+        Waveform.SetMarkers(markers);
     }
 
     // Accepts both "12.5" and "12,5", since Swedish Windows uses a decimal comma.
@@ -475,6 +528,7 @@ public partial class MainWindow : Window
         NoiseFromBox.Text = NoiseToBox.Text = NoiseResultText.Text = "";
 
         _samples = null;
+        _analysedReverbStretch = null;
         ReverbFromBox.IsEnabled = ReverbToBox.IsEnabled = AnalyseReverbButton.IsEnabled = false;
         ReverbFromBox.Text = ReverbToBox.Text = ReverbStatusText.Text = "";
         ReverbTable.ItemsSource = null;

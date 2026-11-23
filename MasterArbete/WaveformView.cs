@@ -1,10 +1,15 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 
 namespace MasterArbete;
+
+/// <summary>A labelled vertical line on the waveform, e.g. where an analysis found the clap.</summary>
+public record WaveformMarker(double Seconds, string Label, Color Color);
 
 /// <summary>
 /// Draws a waveform (amplitude over time) with a time axis in seconds.
@@ -61,6 +66,8 @@ public class WaveformView : FrameworkElement
     private int? _cursor;
     private int? _selectionStart, _selectionEnd;
 
+    private IReadOnlyList<WaveformMarker> _markers = Array.Empty<WaveformMarker>();
+
     // Mouse dragging: a press first counts as a click, and becomes a drag
     // (a new selection, or moving one edge) once it has moved a few pixels.
     private enum DragMode { None, Click, Selecting }
@@ -95,6 +102,13 @@ public class WaveformView : FrameworkElement
     public double? SelectionStartSeconds => _selectionStart / (double?)_sampleRate;
     public double? SelectionEndSeconds => _selectionEnd / (double?)_sampleRate;
 
+    /// <summary>Shows these markers instead of the current ones (none if null).</summary>
+    public void SetMarkers(IReadOnlyList<WaveformMarker>? markers)
+    {
+        _markers = markers ?? Array.Empty<WaveformMarker>();
+        InvalidateVisual();
+    }
+
     /// <summary>Shows a selection, e.g. from typed From/To times. Either may be null. Doesn't raise <see cref="SelectionEdited"/>.</summary>
     public void SetSelection(double? fromSeconds, double? toSeconds)
     {
@@ -128,6 +142,7 @@ public class WaveformView : FrameworkElement
 
         // A new recording: the old cursor and selection don't apply to it.
         _cursor = _selectionStart = _selectionEnd = null;
+        _markers = Array.Empty<WaveformMarker>();
         _drag = DragMode.None;
         InvalidateVisual();
         CursorMoved?.Invoke(this, EventArgs.Empty);
@@ -164,6 +179,7 @@ public class WaveformView : FrameworkElement
         {
             DrawSelection(dc, width, waveHeight);
             DrawWaveform(dc, width, waveHeight);
+            DrawMarkers(dc, width, waveHeight);
             DrawCursor(dc, width, waveHeight);
             DrawTimeAxis(dc, width, waveHeight);
         }
@@ -196,6 +212,31 @@ public class WaveformView : FrameworkElement
             if (edge is not int i) continue;
             double x = Math.Round(ToX(i, width)) + 0.5;
             dc.DrawLine(SelectionEdgePen, new Point(x, 0), new Point(x, waveHeight));
+        }
+    }
+
+    // Each marker is a dashed line with its label at the top, to the right of
+    // the line, or to the left if it wouldn't fit. A label that would overlap
+    // the previous one goes one line lower.
+    private void DrawMarkers(DrawingContext dc, double width, double waveHeight)
+    {
+        double duration = (double)_samples.Length / _sampleRate;
+        double labelY = 2, previousRight = double.NegativeInfinity;
+        foreach (var marker in _markers.OrderBy(m => m.Seconds))
+        {
+            if (marker.Seconds < 0 || marker.Seconds > duration) continue;
+            double x = Math.Round(marker.Seconds / duration * width) + 0.5;
+            var pen = new Pen(MakeBrush(marker.Color), 1) { DashStyle = DashStyles.Dash };
+            pen.Freeze();
+            dc.DrawLine(pen, new Point(x, 0), new Point(x, waveHeight));
+
+            var label = MakeText(marker.Label, TextAlignment.Left);
+            label.SetForegroundBrush(MakeBrush(marker.Color));
+            double left = x + 3 + label.Width <= width ? x + 3 : x - 3 - label.Width;
+            double y = left < previousRight + 4 ? labelY + label.Height : 2;
+            dc.DrawRectangle(BackgroundBrush, null, new Rect(left - 1, y, label.Width + 2, label.Height));
+            dc.DrawText(label, new Point(left, y));
+            (labelY, previousRight) = (y, left + label.Width);
         }
     }
 
