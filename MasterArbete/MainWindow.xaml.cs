@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace MasterArbete;
@@ -37,13 +38,92 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        // At the end of the recording the player stays at the end, so Play
-        // would do nothing. Stop rewinds it, so the next Play starts over.
-        _player.MediaEnded += (_, _) => _player.Stop();
+        _player.MediaEnded += (_, _) => StopPlayback();
+        _playheadTimer.Tick += PlayheadTimer_Tick;
 
         Waveform.CursorMoved += (_, _) => UpdateCursorText();
         Waveform.SelectionEdited += Waveform_SelectionEdited;
+        Waveform.ViewChanged += (_, _) => UpdateWaveformScrollBar();
+        Waveform.PlayPauseRequested += (_, _) =>
+        {
+            if (_playing) PausePlayback();
+            else StartPlayback(Waveform.CursorSeconds ?? 0, null);
+        };
         UpdateCursorText();
+    }
+
+    // ---- Zoom: the scrollbar under the waveform ----
+    //
+    // In seconds: the thumb is as wide as the part shown, and its position is
+    // where that part starts.
+
+    private void UpdateWaveformScrollBar()
+    {
+        double total = Waveform.TotalSeconds, view = Waveform.ViewSeconds;
+        WaveformScrollBar.IsEnabled = Waveform.IsZoomed;
+        WaveformScrollBar.Minimum = 0;
+        WaveformScrollBar.Maximum = Math.Max(total - view, 0);
+        WaveformScrollBar.ViewportSize = view;
+        WaveformScrollBar.LargeChange = view * 0.9;
+        WaveformScrollBar.SmallChange = view * 0.1;
+        WaveformScrollBar.Value = Waveform.ViewStartSeconds;
+    }
+
+    private void WaveformScrollBar_Scroll(object sender, System.Windows.Controls.Primitives.ScrollEventArgs e) =>
+        Waveform.ScrollTo(WaveformScrollBar.Value);
+
+    // ---- Playback ----
+    //
+    // Play starts at the cursor (or the beginning without one). Pause moves the
+    // cursor to where playback got to, so Play continues from there; Stop
+    // leaves the cursor where playback started. A timer moves the playhead on
+    // the waveform, and stops "Play selection" at To.
+
+    private readonly DispatcherTimer _playheadTimer = new() { Interval = TimeSpan.FromMilliseconds(20) };
+    private bool _playing;
+    private double? _playUntilSeconds;   // the end of the selection, when playing just the selection
+
+    private void StartPlayback(double fromSeconds, double? untilSeconds)
+    {
+        if (_currentFilePath == null || !PlayButton.IsEnabled) return;
+        _player.Position = TimeSpan.FromSeconds(fromSeconds);
+        _player.Play();
+        _playing = true;
+        _playUntilSeconds = untilSeconds;
+        Waveform.SetPlayhead(fromSeconds);
+        _playheadTimer.Start();
+    }
+
+    private void PausePlayback()
+    {
+        if (!_playing) return;
+        _player.Pause();
+        double at = _player.Position.TotalSeconds;
+        EndPlayback();
+        Waveform.SetCursor(at);
+    }
+
+    private void StopPlayback()
+    {
+        _player.Stop();
+        EndPlayback();
+    }
+
+    private void EndPlayback()
+    {
+        _playing = false;
+        _playUntilSeconds = null;
+        _playheadTimer.Stop();
+        Waveform.SetPlayhead(null);
+    }
+
+    private void PlayheadTimer_Tick(object? sender, EventArgs e)
+    {
+        double at = _player.Position.TotalSeconds;
+        if (_playUntilSeconds is double until && at >= until)
+            StopPlayback();
+        else
+            Waveform.SetPlayhead(at);
     }
 
     // ---- Cursor and selection on the waveform ----
@@ -110,6 +190,7 @@ public partial class MainWindow : Window
     private void UpdateCursorText()
     {
         if (CursorText == null) return;   // during InitializeComponent
+        PlaySelectionButton.IsEnabled = PlayButton.IsEnabled && HasSelection;
         var culture = CultureInfo.CurrentCulture;
         if (Waveform.CursorSeconds is not double t)
         {
@@ -125,6 +206,9 @@ public partial class MainWindow : Window
             text += $"   selection {FormatSeconds(from)}–{FormatSeconds(to)} s ({FormatSeconds(to - from)} s)";
         CursorText.Text = text;
     }
+
+    private bool HasSelection => Waveform.SelectionStartSeconds is double from
+        && Waveform.SelectionEndSeconds is double to && to > from;
 
     // Milliseconds, so the arrow keys' 1 ms steps show.
     private static string FormatSeconds(double seconds) => seconds.ToString("0.000", CultureInfo.CurrentCulture);
@@ -145,6 +229,7 @@ public partial class MainWindow : Window
 
     private void LoadFile(string path)
     {
+        StopPlayback();
         StatusText.Text = "";
         try
         {
@@ -164,12 +249,12 @@ public partial class MainWindow : Window
             float[]? samples = ShowWaveform(path, info);
             SetUpNoiseMeasurement(info, samples);
             SetUpReverbAnalysis(samples);
-            UpdateCursorText();
 
             bool canPlay = OpenForPlayback(path, info);
             PlayButton.IsEnabled = canPlay;
             PauseButton.IsEnabled = canPlay;
             StopButton.IsEnabled = canPlay;
+            UpdateCursorText();   // after the buttons, since it also enables Play selection
         }
         catch (Exception ex)
         {
@@ -177,7 +262,7 @@ public partial class MainWindow : Window
             PlayButton.IsEnabled = false;
             PauseButton.IsEnabled = false;
             StopButton.IsEnabled = false;
-            ClearInfo();
+            ClearInfo();   // also disables Play selection, through UpdateCursorText
             FilePathText.Text = path;
             StatusText.Text = $"Couldn't read this file: {ex.Message}";
         }
@@ -537,28 +622,24 @@ public partial class MainWindow : Window
         UpdateCursorText();
     }
 
-    // Play starts from the current position: the beginning after Stop, or
-    // where playback was paused after Pause.
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentFilePath == null) return;
-        _player.Play();
+        if (!_playing) StartPlayback(Waveform.CursorSeconds ?? 0, null);
     }
 
-    // Pause keeps the position, so the next Play continues from here.
-    private void PauseButton_Click(object sender, RoutedEventArgs e)
+    private void PlaySelectionButton_Click(object sender, RoutedEventArgs e)
     {
-        _player.Pause();
+        if (Waveform.SelectionStartSeconds is double from && Waveform.SelectionEndSeconds is double to && to > from)
+            StartPlayback(from, to);
     }
 
-    // Stop rewinds to the beginning.
-    private void StopButton_Click(object sender, RoutedEventArgs e)
-    {
-        _player.Stop();
-    }
+    private void PauseButton_Click(object sender, RoutedEventArgs e) => PausePlayback();
+
+    private void StopButton_Click(object sender, RoutedEventArgs e) => StopPlayback();
 
     protected override void OnClosed(EventArgs e)
     {
+        _playheadTimer.Stop();
         _player.Close();
         DeletePlaybackCopy();
         base.OnClosed(e);

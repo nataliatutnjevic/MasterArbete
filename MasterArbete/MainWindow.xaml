@@ -25,12 +25,15 @@
 
         <!-- Playback controls -->
         <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,16,0,0">
-            <Button x:Name="PlayButton" Content="Play" Width="80" Height="30"
-                    Click="PlayButton_Click" IsEnabled="False"/>
-            <Button x:Name="PauseButton" Content="Pause" Width="80" Height="30"
-                    Margin="8,0,0,0" Click="PauseButton_Click" IsEnabled="False"/>
-            <Button x:Name="StopButton" Content="Stop" Width="80" Height="30"
-                    Margin="8,0,0,0" Click="StopButton_Click" IsEnabled="False"/>
+            <!-- Not focusable, so the waveform keeps the keyboard focus and its keys (Space, arrows) keep working -->
+            <Button x:Name="PlayButton" Content="Play" Width="80" Height="30" Focusable="False"
+                    Click="PlayButton_Click" IsEnabled="False" ToolTip="Play from the cursor (Space on the waveform)"/>
+            <Button x:Name="PlaySelectionButton" Content="Play selection" Width="100" Height="30" Focusable="False"
+                    Margin="8,0,0,0" Click="PlaySelectionButton_Click" IsEnabled="False" ToolTip="Play From–To and stop at To"/>
+            <Button x:Name="PauseButton" Content="Pause" Width="80" Height="30" Focusable="False"
+                    Margin="8,0,0,0" Click="PauseButton_Click" IsEnabled="False" ToolTip="Pause and leave the cursor where playback stopped"/>
+            <Button x:Name="StopButton" Content="Stop" Width="80" Height="30" Focusable="False"
+                    Margin="8,0,0,0" Click="StopButton_Click" IsEnabled="False" ToolTip="Stop; the cursor stays where playback started"/>
             <!-- Cursor and selection readout, a read-only TextBox so the numbers can be copied -->
             <TextBox x:Name="CursorText" FontFamily="Consolas" IsReadOnly="True" BorderThickness="0"
                      Background="Transparent" VerticalAlignment="Center" Margin="24,0,0,0" Foreground="#333"/>
@@ -38,8 +41,13 @@
 
         <!-- Waveform: takes all the space left over -->
         <Border Grid.Row="2" Margin="0,16,0,0" BorderBrush="#CCC" BorderThickness="1">
-            <local:WaveformView x:Name="Waveform" MinHeight="160"
-                                ToolTip="Click: cursor · drag: select From–To · ←/→: 1 ms, Shift 10 ms, Ctrl 1 sample · F / T: From / To at the cursor"/>
+            <DockPanel>
+                <!-- Scrolls the waveform when zoomed in; disabled while the whole recording shows -->
+                <ScrollBar x:Name="WaveformScrollBar" DockPanel.Dock="Bottom" Orientation="Horizontal"
+                           IsEnabled="False" Scroll="WaveformScrollBar_Scroll"/>
+                <local:WaveformView x:Name="Waveform" MinHeight="160"
+                                    ToolTip="Click: cursor · drag: select From–To · ←/→: 1 ms, Shift 10 ms, Ctrl 1 sample · F / T: From / To at the cursor&#x0a;Ctrl + wheel or + / −: zoom · wheel: scroll · Z: zoom to the selection · 0: whole recording · Space: play / pause"/>
+            </DockPanel>
         </Border>
 
         <!-- Status / error line -->

@@ -26,6 +26,13 @@ public record WaveformMarker(double Seconds, string Label, Color Color);
 ///   - ← / →: move the cursor 1 ms, with Shift 10 ms, with Ctrl one sample;
 ///     Home / End: to the start / end;
 ///   - F / T: set the selection's start (From) / end (To) at the cursor.
+///
+/// And it can zoom in on part of the recording (the view):
+///   - Ctrl + mouse wheel: zoom in or out around the mouse; mouse wheel: scroll;
+///   - + / −: zoom in or out around the cursor; Z: zoom to the selection;
+///     0: show the whole recording.
+/// Space asks for playback to start or pause (<see cref="PlayPauseRequested"/>),
+/// and <see cref="SetPlayhead"/> shows where playback is.
 /// The keys work once the waveform has keyboard focus (after a click), shown
 /// by a frame around it.
 /// </summary>
@@ -47,9 +54,14 @@ public class WaveformView : FrameworkElement
     private static readonly Brush SelectionBrush = MakeBrush(Color.FromArgb(0x30, 0xF0, 0xA0, 0x00));
     private static readonly Pen SelectionEdgePen = MakePen(Color.FromRgb(0xE0, 0x80, 0x00), 1);
     private static readonly Pen FocusPen = MakePen(Color.FromRgb(0x1F, 0x5F, 0xAF), 2);
+    private static readonly Pen PlayheadPen = MakePen(Color.FromRgb(0x22, 0x22, 0x22), 1.5);
+    private static readonly Brush SampleDotBrush = MakeBrush(Color.FromRgb(0x1F, 0x5F, 0xAF));
 
     private const double EdgeGrabPixels = 4;    // how close to a selection edge a press grabs that edge
     private const double DragThresholdPixels = 3;   // a press that moves less than this is a click, not a drag
+    private const int MinViewSamples = 20;       // the deepest zoom shows this many samples across the plot
+    private const double ZoomStep = 1.5;         // one wheel notch or one + / − zooms by this much
+    private const double MinPixelsPerSampleForDots = 6;   // zoomed in this far, each sample is drawn as a dot too
 
     private float[] _samples = Array.Empty<float>(); //where the actual audio samples stored: _samples contain the amplitudes.
     private int _sampleRate; //_sampleRate tells you ow many samples represent one second, for example _sampleRate=44100
@@ -67,6 +79,12 @@ public class WaveformView : FrameworkElement
     private int? _selectionStart, _selectionEnd;
 
     private IReadOnlyList<WaveformMarker> _markers = Array.Empty<WaveformMarker>();
+    private double? _playhead;   // seconds, while playing
+
+    // The part of the recording shown, in samples (fractions allowed, so
+    // zooming around a point keeps that point still): the whole recording
+    // unless zoomed in.
+    private double _viewStart, _viewLength;
 
     // Mouse dragging: a press first counts as a click, and becomes a drag
     // (a new selection, or moving one edge) once it has moved a few pixels.
@@ -90,6 +108,47 @@ public class WaveformView : FrameworkElement
     /// update each other without going round in circles.
     /// </summary>
     public event EventHandler? SelectionEdited;
+
+    /// <summary>The view changed (zoom or scroll).</summary>
+    public event EventHandler? ViewChanged;
+
+    /// <summary>Space was pressed: start playback at the cursor, or pause it.</summary>
+    public event EventHandler? PlayPauseRequested;
+
+    public double TotalSeconds => _sampleRate > 0 ? (double)_samples.Length / _sampleRate : 0;
+    public double ViewStartSeconds => _sampleRate > 0 ? _viewStart / _sampleRate : 0;
+    public double ViewSeconds => _sampleRate > 0 ? _viewLength / _sampleRate : 0;
+    public bool IsZoomed => HasAudio && _viewLength < _samples.Length;
+
+    /// <summary>Scrolls the view so it starts here, keeping the zoom.</summary>
+    public void ScrollTo(double startSeconds) => SetView(startSeconds * _sampleRate, _viewLength);
+
+    /// <summary>Shows the whole recording.</summary>
+    public void ZoomToAll() => SetView(0, _samples.Length);
+
+    /// <summary>Puts the cursor here, scrolling to it if it's out of view.</summary>
+    public void SetCursor(double seconds)
+    {
+        if (!HasAudio) return;
+        MoveCursor((int)Math.Round(seconds * _sampleRate));
+        ScrollIntoView(_cursor!.Value);
+    }
+
+    /// <summary>
+    /// Shows a playhead line here (none if null). When zoomed, the view turns
+    /// the page once the playhead runs off its right edge.
+    /// </summary>
+    public void SetPlayhead(double? seconds)
+    {
+        _playhead = seconds;
+        if (seconds is double s && HasAudio && IsZoomed)
+        {
+            double index = s * _sampleRate;
+            if (index < _viewStart || index > _viewStart + _viewLength)
+                SetView(index, _viewLength);
+        }
+        InvalidateVisual();
+    }
 
     public double? CursorSeconds => _cursor / (double?)_sampleRate;
 
@@ -143,9 +202,12 @@ public class WaveformView : FrameworkElement
         // A new recording: the old cursor and selection don't apply to it.
         _cursor = _selectionStart = _selectionEnd = null;
         _markers = Array.Empty<WaveformMarker>();
+        _playhead = null;
         _drag = DragMode.None;
+        (_viewStart, _viewLength) = (0, samples.Length);
         InvalidateVisual();
         CursorMoved?.Invoke(this, EventArgs.Empty);
+        ViewChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public void Clear() => SetSamples(Array.Empty<float>(), 0);
@@ -177,10 +239,14 @@ public class WaveformView : FrameworkElement
 
         if (hasAudio)
         {
+            // Zoomed in, the selection and the waveform reach past the plot's edges, so clip them.
+            dc.PushClip(new RectangleGeometry(new Rect(0, 0, width, waveHeight)));
             DrawSelection(dc, width, waveHeight);
             DrawWaveform(dc, width, waveHeight);
             DrawMarkers(dc, width, waveHeight);
             DrawCursor(dc, width, waveHeight);
+            DrawPlayhead(dc, width, waveHeight);
+            dc.Pop();
             DrawTimeAxis(dc, width, waveHeight);
         }
         else //if there is no audio.
@@ -195,7 +261,7 @@ public class WaveformView : FrameworkElement
     }
 
     // The x of a sample index, 0 at the left edge of the plot (same scale as the time axis).
-    private double ToX(int index, double width) => (double)index / _samples.Length * width;
+    private double ToX(double index, double width) => (index - _viewStart) / _viewLength * width;
 
     // Sample value converted into the y-axis's units: a straight line from
     // (_sampleMin, _axisMin) to (_sampleMax, _axisMax), as Swell maps range to view.
@@ -220,12 +286,12 @@ public class WaveformView : FrameworkElement
     // the previous one goes one line lower.
     private void DrawMarkers(DrawingContext dc, double width, double waveHeight)
     {
-        double duration = (double)_samples.Length / _sampleRate;
         double labelY = 2, previousRight = double.NegativeInfinity;
         foreach (var marker in _markers.OrderBy(m => m.Seconds))
         {
-            if (marker.Seconds < 0 || marker.Seconds > duration) continue;
-            double x = Math.Round(marker.Seconds / duration * width) + 0.5;
+            double x = ToX(marker.Seconds * _sampleRate, width);
+            if (x < 0 || x > width) continue;   // outside the view
+            x = Math.Round(x) + 0.5;
             var pen = new Pen(MakeBrush(marker.Color), 1) { DashStyle = DashStyles.Dash };
             pen.Freeze();
             dc.DrawLine(pen, new Point(x, 0), new Point(x, waveHeight));
@@ -247,6 +313,58 @@ public class WaveformView : FrameworkElement
         dc.DrawLine(CursorPen, new Point(x, 0), new Point(x, waveHeight));
     }
 
+    private void DrawPlayhead(DrawingContext dc, double width, double waveHeight)
+    {
+        if (_playhead is not double s) return;
+        double x = ToX(s * _sampleRate, width);
+        dc.DrawLine(PlayheadPen, new Point(x, 0), new Point(x, waveHeight));
+    }
+
+    // ---- Zoom and scroll ----
+
+    // Shows `length` samples from `start`, kept inside the recording and no
+    // deeper than MinViewSamples.
+    private void SetView(double start, double length)
+    {
+        if (!HasAudio) return;
+        length = Math.Clamp(length, Math.Min(MinViewSamples, _samples.Length), _samples.Length);
+        start = Math.Clamp(start, 0, _samples.Length - length);
+        if (start == _viewStart && length == _viewLength) return;
+        (_viewStart, _viewLength) = (start, length);
+        InvalidateVisual();
+        ViewChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // Zooms by `factor` (below 1 zooms in) so the sample at `fraction` of the
+    // plot's width (0 = left edge, 1 = right edge) stays where it is.
+    private void ZoomAround(double factor, double fraction)
+    {
+        double anchor = _viewStart + fraction * _viewLength;
+        double length = Math.Clamp(_viewLength * factor, Math.Min(MinViewSamples, _samples.Length), _samples.Length);
+        SetView(anchor - fraction * length, length);
+    }
+
+    // Zooms around the cursor if it's in view, otherwise around the middle.
+    private void ZoomAroundCursor(double factor)
+    {
+        double fraction = _cursor is int c ? (c - _viewStart) / _viewLength : 0.5;
+        ZoomAround(factor, fraction is >= 0 and <= 1 ? fraction : 0.5);
+    }
+
+    private void ZoomToSelection()
+    {
+        if (_selectionStart is not int s || _selectionEnd is not int e || e <= s) return;
+        double margin = (e - s) * 0.05;   // a little room on both sides, so the edges show
+        SetView(s - margin, e - s + 2 * margin);
+    }
+
+    // Scrolls just far enough to show this sample, if it's out of view.
+    private void ScrollIntoView(int index)
+    {
+        if (index < _viewStart) SetView(index, _viewLength);
+        else if (index + 1 > _viewStart + _viewLength) SetView(index + 1 - _viewLength, _viewLength);
+    }
+
     // ---- Mouse and keyboard ----
 
     private bool HasAudio => _samples.Length > 0 && _sampleRate > 0;
@@ -254,7 +372,7 @@ public class WaveformView : FrameworkElement
 
     // The selection edge (0..length) nearest to x, x measured from the left edge of the plot.
     private int IndexAt(double x) =>
-        (int)Math.Round(Math.Clamp(x / PlotWidth, 0, 1) * _samples.Length);
+        (int)Math.Round(_viewStart + Math.Clamp(x / PlotWidth, 0, 1) * _viewLength);
 
     private int ClampCursor(int index) => Math.Clamp(index, 0, _samples.Length - 1);
 
@@ -351,10 +469,15 @@ public class WaveformView : FrameworkElement
 
         switch (e.Key)
         {
-            case Key.Left: MoveCursor(Step(-1)); break;
-            case Key.Right: MoveCursor(Step(+1)); break;
-            case Key.Home: MoveCursor(0); break;
-            case Key.End: MoveCursor(_samples.Length - 1); break;
+            case Key.Left: MoveCursor(Step(-1)); ScrollIntoView(_cursor!.Value); break;
+            case Key.Right: MoveCursor(Step(+1)); ScrollIntoView(_cursor!.Value); break;
+            case Key.Home: MoveCursor(0); ScrollIntoView(0); break;
+            case Key.End: MoveCursor(_samples.Length - 1); ScrollIntoView(_samples.Length - 1); break;
+            case Key.OemPlus or Key.Add: ZoomAroundCursor(1 / ZoomStep); break;
+            case Key.OemMinus or Key.Subtract: ZoomAroundCursor(ZoomStep); break;
+            case Key.D0 or Key.NumPad0: ZoomToAll(); break;
+            case Key.Z when modifiers == ModifierKeys.None: ZoomToSelection(); break;
+            case Key.Space: PlayPauseRequested?.Invoke(this, EventArgs.Empty); break;
             case Key.F when _cursor != null && modifiers == ModifierKeys.None:
                 _selectionStart = _cursor;
                 InvalidateVisual();
@@ -368,6 +491,24 @@ public class WaveformView : FrameworkElement
             default: return;
         }
         e.Handled = true;   // also keeps the arrow keys from moving the focus to another control
+    }
+
+    // Ctrl + wheel zooms around the mouse; the wheel alone scrolls a tenth of the view per notch.
+    protected override void OnMouseWheel(MouseWheelEventArgs e)
+    {
+        base.OnMouseWheel(e);
+        if (!HasAudio || PlotWidth < 1) return;
+        double notches = e.Delta / 120.0;   // up / away from you is positive
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            double fraction = Math.Clamp((e.GetPosition(this).X - YAxisWidth) / PlotWidth, 0, 1);
+            ZoomAround(Math.Pow(ZoomStep, -notches), fraction);
+        }
+        else
+        {
+            SetView(_viewStart - notches * 0.1 * _viewLength, _viewLength);
+        }
+        e.Handled = true;
     }
 
     protected override void OnIsKeyboardFocusedChanged(DependencyPropertyChangedEventArgs e)
@@ -411,7 +552,7 @@ public class WaveformView : FrameworkElement
 
     private void DrawWaveform(DrawingContext dc, double width, double waveHeight)
     {
-        double samplesPerPixel = _samples.Length / width; //samples per pixel is extremely important
+        double samplesPerPixel = _viewLength / width; //samples per pixel is extremely important
 
         double ToY(float value) => this.ToY(value, waveHeight);
 
@@ -424,8 +565,8 @@ public class WaveformView : FrameworkElement
                 int columns = (int)Math.Ceiling(width);
                 for (int x = 0; x < columns; x++)
                 {
-                    int start = (int)(x * samplesPerPixel);
-                    int end = Math.Min((int)((x + 1) * samplesPerPixel), _samples.Length);
+                    int start = (int)(_viewStart + x * samplesPerPixel);
+                    int end = Math.Min((int)(_viewStart + (x + 1) * samplesPerPixel), _samples.Length);
                     if (start >= end) continue;
 
                     float min = _samples[start], max = _samples[start];
@@ -444,34 +585,51 @@ public class WaveformView : FrameworkElement
             }
             else
             {
-                // Fewer samples than pixels: connect the samples with lines.
-                double pixelsPerSample = width / Math.Max(_samples.Length - 1, 1);
-                ctx.BeginFigure(new Point(0, ToY(_samples[0])), false, false);
-                for (int i = 1; i < _samples.Length; i++)
-                    ctx.LineTo(new Point(i * pixelsPerSample, ToY(_samples[i])), true, false);
+                // Fewer samples than pixels: connect the samples with lines,
+                // from the one just left of the view to the one just right of it.
+                (int first, int last) = VisibleSampleRange();
+                ctx.BeginFigure(new Point(ToX(first, width), ToY(_samples[first])), false, false);
+                for (int i = first + 1; i <= last; i++)
+                    ctx.LineTo(new Point(ToX(i, width), ToY(_samples[i])), true, false);
             }
         }
         geometry.Freeze();
         dc.DrawGeometry(null, WavePen, geometry);
+
+        // Zoomed in far enough, show the samples themselves, so stepping one sample with Ctrl + arrow can be followed.
+        if (1 / samplesPerPixel >= MinPixelsPerSampleForDots)
+        {
+            (int first, int last) = VisibleSampleRange();
+            for (int i = first; i <= last; i++)
+                dc.DrawEllipse(SampleDotBrush, null, new Point(ToX(i, width), ToY(_samples[i])), 2, 2);
+        }
     }
+
+    // The samples to draw: those in view plus one on each side, so the line reaches the plot's edges.
+    private (int First, int Last) VisibleSampleRange() =>
+        (Math.Max((int)Math.Floor(_viewStart) - 1, 0),
+         Math.Min((int)Math.Ceiling(_viewStart + _viewLength) + 1, _samples.Length - 1));
 
     private void DrawTimeAxis(DrawingContext dc, double width, double waveHeight)
     {
-        double duration = (double)_samples.Length / _sampleRate;
+        // The times at the left and right edges of the view.
+        double start = _viewStart / _sampleRate, duration = _viewLength / _sampleRate;
         double axisY = Math.Round(waveHeight) + 0.5;
         dc.DrawLine(AxisPen, new Point(0, axisY), new Point(width, axisY));
 
         double step = NiceStep(duration * MinTickSpacing / width);
         int decimals = Decimals(step);
 
-        for (int n = 0; n * step <= duration + 1e-9; n++)
+        // Ticks at whole multiples of the step, so the labels are round numbers.
+        for (long n = (long)Math.Ceiling(start / step - 1e-9); n * step <= start + duration + 1e-9; n++)
         {
             double t = n * step;
-            double x = Math.Round(t / duration * width) + 0.5;
-            if (n > 0 && x > width - 25) break;   // too close to the right edge for its label to fit
+            double x = Math.Round((t - start) / duration * width) + 0.5;
+            bool atLeftEdge = x < 25;
+            if (!atLeftEdge && x > width - 25) break;   // too close to the right edge for its label to fit
 
             dc.DrawLine(AxisPen, new Point(x, axisY), new Point(x, axisY + 4));
-            var alignment = n == 0 ? TextAlignment.Left : TextAlignment.Center;
+            var alignment = atLeftEdge ? TextAlignment.Left : TextAlignment.Center;
             DrawText(dc, t.ToString("F" + decimals, CultureInfo.CurrentCulture) + " s",
                      new Point(x, axisY + 5), alignment);
         }
