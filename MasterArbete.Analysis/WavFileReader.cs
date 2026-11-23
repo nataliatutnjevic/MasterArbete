@@ -104,10 +104,12 @@ public class WavInfo
 /// <summary>
 /// Minimal RIFF/WAVE header parser. Reads just enough of the file
 /// to report format info without loading the whole file into memory.
-/// Supports the common PCM / IEEE float "fmt " chunk layout.
+/// Supports PCM and IEEE float, also in the WAVE_FORMAT_EXTENSIBLE layout.
 /// </summary>
 public static class WavFileReader
 {
+    private const ushort ExtensibleFormat = 0xFFFE;
+
     // Soundswell writes the chunk ID as lowercase "swel". RIFF IDs are
     // case-sensitive, but accept any casing to be safe.
     internal static bool IsSwel(string chunkId) =>
@@ -246,6 +248,7 @@ public static class WavFileReader
         short audioFormat = 0;
         uint dataSize = 0;
         bool haveFmt = false;
+        bool isExtensible = false;
         var chunks = new List<WavChunk>();
         SwelHeader? swel = null;
 
@@ -270,6 +273,20 @@ public static class WavFileReader
                 ReadInt16();                 // block align (ignored)
                 bitsPerSample = ReadInt16();
                 haveFmt = true;
+
+                // WAVE_FORMAT_EXTENSIBLE, used e.g. for 24-bit and multichannel
+                // files: the real format is in the first two bytes of the
+                // SubFormat GUID, after cbSize, valid bits and the channel mask.
+                // The samples are stored as for that format, in containers of
+                // bitsPerSample, so the rest of the reader needs nothing else.
+                if ((ushort)audioFormat == ExtensibleFormat && chunkSize >= 40)
+                {
+                    ReadInt16();             // cbSize (22)
+                    ReadInt16();             // valid bits per sample (ignored)
+                    ReadInt32();             // channel mask (ignored)
+                    audioFormat = (short)ReadInt32();   // SubFormat GUID's first field: 1 = PCM, 3 = IEEE float
+                    isExtensible = true;
+                }
             }
             else if (chunkId == "data")
             {
@@ -303,12 +320,12 @@ public static class WavFileReader
             IsBigEndian = bigEndian,
             Chunks = chunks,
             Swel = swel,
-            FormatName = audioFormat switch
+            FormatName = (audioFormat switch
             {
                 1 => "PCM",
                 3 => "IEEE Float",
-                _ => $"Format code {audioFormat}"
-            }
+                _ => $"Format code {(ushort)audioFormat}"
+            }) + (isExtensible ? " (extensible)" : "")
         };
     }
 }
