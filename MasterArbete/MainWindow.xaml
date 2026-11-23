@@ -31,11 +31,15 @@
                     Margin="8,0,0,0" Click="PauseButton_Click" IsEnabled="False"/>
             <Button x:Name="StopButton" Content="Stop" Width="80" Height="30"
                     Margin="8,0,0,0" Click="StopButton_Click" IsEnabled="False"/>
+            <!-- Cursor and selection readout, a read-only TextBox so the numbers can be copied -->
+            <TextBox x:Name="CursorText" FontFamily="Consolas" IsReadOnly="True" BorderThickness="0"
+                     Background="Transparent" VerticalAlignment="Center" Margin="24,0,0,0" Foreground="#333"/>
         </StackPanel>
 
         <!-- Waveform: takes all the space left over -->
         <Border Grid.Row="2" Margin="0,16,0,0" BorderBrush="#CCC" BorderThickness="1">
-            <local:WaveformView x:Name="Waveform" MinHeight="160"/>
+            <local:WaveformView x:Name="Waveform" MinHeight="160"
+                                ToolTip="Click: cursor · drag: select From–To · ←/→: 1 ms, Shift 10 ms, Ctrl 1 sample · F / T: From / To at the cursor"/>
         </Border>
 
         <!-- Status / error line -->
@@ -43,7 +47,7 @@
                    Foreground="Red" TextWrapping="Wrap"/>
 
         <!-- Tabs: file info and Soundswell header, background noise, reverberation time -->
-        <TabControl Grid.Row="4" Margin="0,8,0,0">
+        <TabControl x:Name="Tabs" Grid.Row="4" Margin="0,8,0,0" SelectionChanged="Tabs_SelectionChanged">
             <TabItem Header="File info">
                 <Grid Margin="12">
                     <Grid.ColumnDefinitions>
@@ -73,14 +77,14 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Background noise">
+            <TabItem x:Name="NoiseTab" Header="Background noise">
                 <StackPanel Margin="12">
                     <TextBlock Text="Measure the background noise in a calibrated recording" FontWeight="Bold" Margin="0,0,0,8"/>
                     <StackPanel Orientation="Horizontal">
                         <TextBlock Text="From" VerticalAlignment="Center"/>
-                        <TextBox x:Name="NoiseFromBox" Width="60" Margin="6,0,0,0" IsEnabled="False"/>
+                        <TextBox x:Name="NoiseFromBox" Width="60" TextChanged="StretchBox_TextChanged" Margin="6,0,0,0" IsEnabled="False"/>
                         <TextBlock Text="to" VerticalAlignment="Center" Margin="6,0,0,0"/>
-                        <TextBox x:Name="NoiseToBox" Width="60" Margin="6,0,0,0" IsEnabled="False"/>
+                        <TextBox x:Name="NoiseToBox" Width="60" TextChanged="StretchBox_TextChanged" Margin="6,0,0,0" IsEnabled="False"/>
                         <TextBlock Text="s" VerticalAlignment="Center" Margin="4,0,0,0"/>
                         <Button x:Name="MeasureNoiseButton" Content="Measure" Width="76" Height="24"
                                 Margin="10,0,0,0" Click="MeasureNoiseButton_Click" IsEnabled="False"/>
@@ -92,7 +96,7 @@
                 </StackPanel>
             </TabItem>
 
-            <TabItem Header="Reverberation time">
+            <TabItem x:Name="ReverbTab" Header="Reverberation time">
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
@@ -105,9 +109,9 @@
 
                     <StackPanel Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="From" VerticalAlignment="Center"/>
-                        <TextBox x:Name="ReverbFromBox" Width="60" Margin="6,0,0,0" IsEnabled="False"/>
+                        <TextBox x:Name="ReverbFromBox" Width="60" TextChanged="StretchBox_TextChanged" Margin="6,0,0,0" IsEnabled="False"/>
                         <TextBlock Text="to" VerticalAlignment="Center" Margin="6,0,0,0"/>
-                        <TextBox x:Name="ReverbToBox" Width="60" Margin="6,0,0,0" IsEnabled="False"/>
+                        <TextBox x:Name="ReverbToBox" Width="60" TextChanged="StretchBox_TextChanged" Margin="6,0,0,0" IsEnabled="False"/>
                         <TextBlock Text="s" VerticalAlignment="Center" Margin="4,0,0,0"/>
                         <Button x:Name="AnalyseReverbButton" Content="Analyse" Width="76" Height="24"
                                 Margin="10,0,0,0" Click="AnalyseReverbButton_Click" IsEnabled="False"/>

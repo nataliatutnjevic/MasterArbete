@@ -38,7 +38,92 @@ public partial class MainWindow : Window
         // At the end of the recording the player stays at the end, so Play
         // would do nothing. Stop rewinds it, so the next Play starts over.
         _player.MediaEnded += (_, _) => _player.Stop();
+
+        Waveform.CursorMoved += (_, _) => UpdateCursorText();
+        Waveform.SelectionEdited += Waveform_SelectionEdited;
+        UpdateCursorText();
     }
+
+    // ---- Cursor and selection on the waveform ----
+    //
+    // The waveform's selection always shows the From/To of the open tab
+    // (background noise or reverberation time): dragging or F / T on the
+    // waveform writes the boxes, and typing in the boxes moves the selection.
+
+    private bool _writingStretchBoxes;   // true while the waveform writes the boxes, so they don't write back
+
+    // The From and To boxes of the open tab, or null on a tab without them.
+    private (TextBox From, TextBox To)? ActiveStretchBoxes()
+    {
+        if (Tabs == null) return null;   // during InitializeComponent
+        var tab = Tabs.SelectedItem;
+        return tab == NoiseTab ? (NoiseFromBox, NoiseToBox)
+            : tab == ReverbTab ? (ReverbFromBox, ReverbToBox)
+            : null;
+    }
+
+    private void Waveform_SelectionEdited(object? sender, EventArgs e)
+    {
+        if (ActiveStretchBoxes() is { } boxes && boxes.From.IsEnabled)
+        {
+            _writingStretchBoxes = true;
+            if (Waveform.SelectionStartSeconds is double from) boxes.From.Text = FormatSeconds(from);
+            if (Waveform.SelectionEndSeconds is double to) boxes.To.Text = FormatSeconds(to);
+            _writingStretchBoxes = false;
+        }
+        UpdateCursorText();
+    }
+
+    private void StretchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (!_writingStretchBoxes) ShowActiveStretch();
+    }
+
+    // TabControl.SelectionChanged also bubbles up from controls inside the
+    // tabs (e.g. the reverberation table), so only react to the tabs themselves.
+    private void Tabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.Source == Tabs) ShowActiveStretch();
+    }
+
+    // Shows the open tab's From/To as the waveform's selection.
+    private void ShowActiveStretch()
+    {
+        if (Waveform == null) return;   // during InitializeComponent
+        if (ActiveStretchBoxes() is { } boxes && boxes.From.IsEnabled)
+        {
+            double? from = TryParseSeconds(boxes.From.Text, out double f) ? f : null;
+            double? to = TryParseSeconds(boxes.To.Text, out double t) ? t : null;
+            Waveform.SetSelection(from, to);
+        }
+        else
+        {
+            Waveform.SetSelection(null, null);
+        }
+        UpdateCursorText();
+    }
+
+    private void UpdateCursorText()
+    {
+        if (CursorText == null) return;   // during InitializeComponent
+        var culture = CultureInfo.CurrentCulture;
+        if (Waveform.CursorSeconds is not double t)
+        {
+            CursorText.Text = _samples != null ? "Click the waveform for a cursor, or drag to select From–To." : "";
+            return;
+        }
+
+        string amplitude = Waveform.CursorAmplitude is double a
+            ? a.ToString("0.0000", culture) + (Waveform.AxisUnit is { } unit ? " " + unit : "")
+            : "–";
+        string text = $"Cursor {FormatSeconds(t)} s   amplitude {amplitude}";
+        if (Waveform.SelectionStartSeconds is double from && Waveform.SelectionEndSeconds is double to && to > from)
+            text += $"   selection {FormatSeconds(from)}–{FormatSeconds(to)} s ({FormatSeconds(to - from)} s)";
+        CursorText.Text = text;
+    }
+
+    // Milliseconds, so the arrow keys' 1 ms steps show.
+    private static string FormatSeconds(double seconds) => seconds.ToString("0.000", CultureInfo.CurrentCulture);
 
     private void BrowseButton_Click(object sender, RoutedEventArgs e)
     {
@@ -75,6 +160,7 @@ public partial class MainWindow : Window
             float[]? samples = ShowWaveform(path, info);
             SetUpNoiseMeasurement(info, samples);
             SetUpReverbAnalysis(samples);
+            UpdateCursorText();
 
             bool canPlay = OpenForPlayback(path, info);
             PlayButton.IsEnabled = canPlay;
@@ -394,6 +480,7 @@ public partial class MainWindow : Window
         ReverbTable.ItemsSource = null;
         LojReverbText.Text = "";
         DecayCurve.Clear();
+        UpdateCursorText();
     }
 
     // Play starts from the current position: the beginning after Stop, or
