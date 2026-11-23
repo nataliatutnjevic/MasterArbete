@@ -50,6 +50,7 @@ public partial class MainWindow : Window
             else StartPlayback(Waveform.CursorSeconds ?? 0, null);
         };
         UpdateCursorText();
+        ShowLojResult();
     }
 
     // ---- Zoom: the scrollbar under the waveform ----
@@ -405,7 +406,8 @@ public partial class MainWindow : Window
         ReverbToBox.Text = canAnalyse ? (samples!.Length / (double)_sampleRate).ToString("0.00", CultureInfo.CurrentCulture) : "";
         ReverbStatusText.Text = canAnalyse ? "" : "The samples couldn't be read.";
         ReverbTable.ItemsSource = null;
-        LojReverbText.Text = "";
+        _reverbResult = null;
+        ShowLojResult();
         DecayCurve.Clear();
     }
 
@@ -453,7 +455,8 @@ public partial class MainWindow : Window
                 from, to, timeReversed ? ", time-reversed band filters" : "");
             ReverbStatusText.Text = _reverbAnalysedText;
             ReverbTable.ItemsSource = rows;
-            LojReverbText.Text = FormatLojReverbResult(result);
+            _reverbResult = result;
+            ShowLojResult();
             // Keep showing the same band after a new analysis, the 1 kHz band at first.
             ReverbTable.SelectedItem = rows.FirstOrDefault(r => r.Band == selectedBand)
                 ?? rows.FirstOrDefault(r => r.Band == "1 kHz") ?? rows[0];
@@ -469,31 +472,78 @@ public partial class MainWindow : Window
         }
     }
 
-    // One line per Kravnivå, naming the bands that decide a "fails" or "can't tell".
-    private static string FormatLojReverbResult(ReverberationResult result)
+    // ---- LOJ: the analysis compared with the Kravnivå picked with the buttons ----
+
+    private ReverberationResult? _reverbResult;   // the last analysis, so switching level needs no new one
+
+    private static readonly (Color Background, Color Text) MeetsColors = (Color.FromRgb(0xDF, 0xF2, 0xDF), Color.FromRgb(0x1E, 0x6B, 0x1E));
+    private static readonly (Color Background, Color Text) FailsColors = (Color.FromRgb(0xF8, 0xDE, 0xDE), Color.FromRgb(0xA0, 0x1C, 0x1C));
+    private static readonly (Color Background, Color Text) CantTellColors = (Color.FromRgb(0xFC, 0xF0, 0xD4), Color.FromRgb(0x8A, 0x5A, 0x00));
+    private static readonly (Color Background, Color Text) NoResultColors = (Color.FromRgb(0xEE, 0xEE, 0xEE), Color.FromRgb(0x55, 0x55, 0x55));
+
+    private LojReverbLimit SelectedLojLimit()
     {
+        int level = LojLevel1Button.IsChecked == true ? 1 : LojLevel2Button.IsChecked == true ? 2 : 3;
+        return LojReverbLimit.All.Single(l => l.Level == level);
+    }
+
+    private void LojLevelButton_Checked(object sender, RoutedEventArgs e) => ShowLojResult();
+
+    // A coloured verdict for the picked level, and below it every band with its T20 and limit.
+    private void ShowLojResult()
+    {
+        if (LojVerdictText == null || LojReverbText == null) return;   // during InitializeComponent
         var culture = CultureInfo.CurrentCulture;
-        var lines = new List<string>
+        var limit = SelectedLojLimit();
+
+        if (_reverbResult is not { } result)
         {
-            "LOJ Kravnivå (T20)  limit 250 Hz / ≥500 Hz   result",
-        };
-        foreach (var limit in LojReverbLimit.All)
+            SetLojVerdict($"Press Analyse to compare with Kravnivå {limit.Level}.", NoResultColors);
+            LojReverbText.Text = string.Format(culture, "Kravnivå {0}: T20 below {1:0.00} s at 250 Hz, below {2:0.00} s from 500 Hz up.",
+                limit.Level, limit.MaxBelow500HzSeconds, limit.MaxFrom500HzSeconds);
+            return;
+        }
+
+        var check = limit.Check(result);
+        switch (check.Verdict)
         {
-            var check = limit.Check(result);
-            string verdict = check.Verdict switch
+            case LojVerdict.Meets:
+                SetLojVerdict($"✓ Meets Kravnivå {limit.Level}", MeetsColors);
+                break;
+            case LojVerdict.Fails:
+                SetLojVerdict($"✗ Fails Kravnivå {limit.Level}: "
+                    + string.Join(", ", check.DecidingBands.Select(b => b.Band.Name)) + " too long", FailsColors);
+                break;
+            default:
+                SetLojVerdict($"? Can't tell for Kravnivå {limit.Level}: "
+                    + string.Join(", ", check.DecidingBands.Select(b => b.Band.Name)) + " not reliable", CantTellColors);
+                break;
+        }
+
+        var lines = new List<string> { "Band       T20 (s)   limit (s)   result" };
+        foreach (var band in check.Bands)
+        {
+            string t20 = band.T20Seconds is not double t ? "–"
+                : band.IsReliable ? t.ToString("0.00", culture)
+                : "(" + t.ToString("0.00", culture) + ")";
+            string verdict = band.Verdict switch
             {
                 LojVerdict.Meets => "meets",
-                LojVerdict.Fails => "fails: " + string.Join(", ", check.DecidingBands.Select(b =>
-                    string.Format(culture, "{0} {1:0.00} s", b.Band.Name, b.T20Seconds))),
-                _ => "can't tell: " + string.Join(", ", check.DecidingBands.Select(b => b.Band.Name))
-                    + " not reliable",
+                LojVerdict.Fails => "fails",
+                _ => band.T20Seconds == null ? "can't tell: no decay" : "can't tell: under 35 dB",
             };
-            lines.Add(string.Format(culture, "{0,-19} <{1:0.00} s / <{2:0.00} s     {3}",
-                limit.Level, limit.MaxBelow500HzSeconds, limit.MaxFrom500HzSeconds, verdict));
+            lines.Add(string.Format(culture, "{0,-10} {1,-9} < {2,-9:0.00} {3}", band.Band.Name, t20, band.LimitSeconds, verdict));
         }
         lines.Add("");
         lines.Add("Every band from 250 Hz up must be below its limit. A T20 in parentheses has under 35 dB of dynamic range and isn't trusted.");
-        return string.Join("\n", lines);
+        LojReverbText.Text = string.Join("\n", lines);
+    }
+
+    private void SetLojVerdict(string text, (Color Background, Color Text) colors)
+    {
+        LojVerdictText.Text = text;
+        LojVerdictText.Foreground = new SolidColorBrush(colors.Text);
+        LojVerdictBorder.Background = new SolidColorBrush(colors.Background);
     }
 
     private void ReverbTable_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -617,7 +667,8 @@ public partial class MainWindow : Window
         ReverbFromBox.IsEnabled = ReverbToBox.IsEnabled = AnalyseReverbButton.IsEnabled = false;
         ReverbFromBox.Text = ReverbToBox.Text = ReverbStatusText.Text = "";
         ReverbTable.ItemsSource = null;
-        LojReverbText.Text = "";
+        _reverbResult = null;
+        ShowLojResult();
         DecayCurve.Clear();
         UpdateCursorText();
     }

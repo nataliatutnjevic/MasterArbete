@@ -136,10 +136,29 @@
 
                     <DockPanel Grid.Row="1" Grid.Column="1" Margin="12,0,0,0" Width="480">
                         <TextBlock DockPanel.Dock="Top" Text="Click a row to see its decay." Margin="0,0,0,6"/>
-                        <!-- The LOJ verdict, read-only TextBox so it can be copied like the noise result -->
-                        <TextBox x:Name="LojReverbText" DockPanel.Dock="Bottom" FontFamily="Consolas" IsReadOnly="True"
-                                 BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
-                                 Margin="0,8,0,0"/>
+                        <!-- The LOJ check for the Kravnivå picked with the buttons (3 at first) -->
+                        <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="LOJ" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <!-- Radio buttons drawn as toggle buttons: exactly one level is picked at a time -->
+                                <RadioButton x:Name="LojLevel1Button" Content="Kravnivå 1" GroupName="LojLevel" Tag="1"
+                                             Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Focusable="False"
+                                             Checked="LojLevelButton_Checked"/>
+                                <RadioButton x:Name="LojLevel2Button" Content="Kravnivå 2" GroupName="LojLevel" Tag="2"
+                                             Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Margin="6,0,0,0" Focusable="False"
+                                             Checked="LojLevelButton_Checked"/>
+                                <RadioButton x:Name="LojLevel3Button" Content="Kravnivå 3" GroupName="LojLevel" Tag="3"
+                                             Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Margin="6,0,0,0" Focusable="False"
+                                             Checked="LojLevelButton_Checked" IsChecked="True"/>
+                            </StackPanel>
+                            <Border x:Name="LojVerdictBorder" Margin="0,8,0,0" Padding="8,4" CornerRadius="3" Background="#EEE">
+                                <TextBlock x:Name="LojVerdictText" FontWeight="Bold" FontSize="14" TextWrapping="Wrap"/>
+                            </Border>
+                            <!-- The bands one by one, read-only TextBox so it can be copied like the noise result -->
+                            <TextBox x:Name="LojReverbText" FontFamily="Consolas" IsReadOnly="True"
+                                     BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
+                                     Margin="0,6,0,0"/>
+                        </StackPanel>
                         <DataGrid x:Name="ReverbTable" AutoGenerateColumns="False" IsReadOnly="True"
                                   SelectionMode="Single" HeadersVisibility="Column" CanUserSortColumns="False"
                                   CanUserReorderColumns="False" GridLinesVisibility="Horizontal"
