@@ -97,10 +97,27 @@
                         <Button x:Name="MeasureNoiseButton" Content="Measure" Width="76" Height="24"
                                 Margin="10,0,0,0" Click="MeasureNoiseButton_Click" IsEnabled="False"/>
                     </StackPanel>
+                    <!-- The LOJ check for the Kravnivå picked with the buttons, the same level as on the reverberation tab -->
+                    <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                        <TextBlock Text="LOJ" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <RadioButton x:Name="NoiseLojLevel1Button" Content="Kravnivå 1" GroupName="NoiseLojLevel" Tag="1"
+                                     Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Focusable="False"
+                                     Checked="LojLevelButton_Checked"/>
+                        <RadioButton x:Name="NoiseLojLevel2Button" Content="Kravnivå 2" GroupName="NoiseLojLevel" Tag="2"
+                                     Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Margin="6,0,0,0" Focusable="False"
+                                     Checked="LojLevelButton_Checked"/>
+                        <RadioButton x:Name="NoiseLojLevel3Button" Content="Kravnivå 3" GroupName="NoiseLojLevel" Tag="3"
+                                     Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Margin="6,0,0,0" Focusable="False"
+                                     Checked="LojLevelButton_Checked" IsChecked="True"/>
+                    </StackPanel>
+                    <Border x:Name="NoiseVerdictBorder" Margin="0,8,0,0" Padding="8,4" CornerRadius="3" Background="#EEE"
+                            HorizontalAlignment="Left" MinWidth="420">
+                        <TextBlock x:Name="NoiseVerdictText" FontWeight="Bold" FontSize="14" TextWrapping="Wrap"/>
+                    </Border>
                     <!-- A read-only TextBox rather than a TextBlock, so the results can be copied -->
                     <TextBox x:Name="NoiseResultText" FontFamily="Consolas" IsReadOnly="True"
                              BorderThickness="0" Background="Transparent" TextWrapping="Wrap"
-                             Margin="0,8,0,0"/>
+                             Margin="0,6,0,0"/>
                 </StackPanel>
             </TabItem>
 
@@ -141,13 +158,13 @@
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="LOJ" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                 <!-- Radio buttons drawn as toggle buttons: exactly one level is picked at a time -->
-                                <RadioButton x:Name="LojLevel1Button" Content="Kravnivå 1" GroupName="LojLevel" Tag="1"
+                                <RadioButton x:Name="LojLevel1Button" Content="Kravnivå 1" GroupName="ReverbLojLevel" Tag="1"
                                              Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Focusable="False"
                                              Checked="LojLevelButton_Checked"/>
-                                <RadioButton x:Name="LojLevel2Button" Content="Kravnivå 2" GroupName="LojLevel" Tag="2"
+                                <RadioButton x:Name="LojLevel2Button" Content="Kravnivå 2" GroupName="ReverbLojLevel" Tag="2"
                                              Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Margin="6,0,0,0" Focusable="False"
                                              Checked="LojLevelButton_Checked"/>
-                                <RadioButton x:Name="LojLevel3Button" Content="Kravnivå 3" GroupName="LojLevel" Tag="3"
+                                <RadioButton x:Name="LojLevel3Button" Content="Kravnivå 3" GroupName="ReverbLojLevel" Tag="3"
                                              Style="{StaticResource {x:Type ToggleButton}}" Padding="10,3" Margin="6,0,0,0" Focusable="False"
                                              Checked="LojLevelButton_Checked" IsChecked="True"/>
                             </StackPanel>

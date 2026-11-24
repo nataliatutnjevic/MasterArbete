@@ -51,6 +51,7 @@ public partial class MainWindow : Window
         };
         UpdateCursorText();
         ShowLojResult();
+        ShowNoiseResult();
     }
 
     // ---- Zoom: the scrollbar under the waveform ----
@@ -341,11 +342,13 @@ public partial class MainWindow : Window
         NoiseFromBox.IsEnabled = NoiseToBox.IsEnabled = MeasureNoiseButton.IsEnabled = canMeasure;
         NoiseFromBox.Text = canMeasure ? "0" : "";
         NoiseToBox.Text = canMeasure ? (_pressure!.Length / (double)_sampleRate).ToString("0.00", CultureInfo.CurrentCulture) : "";
-        NoiseResultText.Text = canMeasure
-            ? "Enter the part of the recording that is only background noise, then press Measure."
+        _noiseMeasurement = null;
+        _noiseMessage = canMeasure
+            ? null
             : samples == null
                 ? "The samples couldn't be read."
                 : "This file isn't calibrated (its swel \"view\" isn't in Pa), so levels in dB SPL can't be calculated.";
+        ShowNoiseResult();
     }
 
     private void MeasureNoiseButton_Click(object sender, RoutedEventArgs e)
@@ -354,7 +357,7 @@ public partial class MainWindow : Window
 
         if (!TryParseSeconds(NoiseFromBox.Text, out double from) || !TryParseSeconds(NoiseToBox.Text, out double to))
         {
-            NoiseResultText.Text = "Enter the start and end in seconds, e.g. 12.5.";
+            ShowNoiseProblem("Enter the start and end in seconds, e.g. 12.5.");
             return;
         }
 
@@ -365,33 +368,67 @@ public partial class MainWindow : Window
         int end = (int)Math.Round(to * _sampleRate);
         if (end - start < BackgroundNoise.MinSamples)
         {
-            NoiseResultText.Text = $"The part to measure must be at least " +
-                $"{BackgroundNoise.MinSamples / (double)_sampleRate:0.00} s long, and end after it starts.";
+            ShowNoiseProblem($"The part to measure must be at least " +
+                $"{BackgroundNoise.MinSamples / (double)_sampleRate:0.00} s long, and end after it starts.");
             return;
         }
 
-        var levels = BackgroundNoise.Measure(_pressure, _sampleRate, start, end - start);
-        NoiseResultText.Text = FormatNoiseResult(levels, from, to);
+        _noiseMeasurement = (BackgroundNoise.Measure(_pressure, _sampleRate, start, end - start), from, to);
+        _noiseMessage = null;
+        ShowNoiseResult();
     }
 
-    private static string FormatNoiseResult(NoiseLevels levels, double from, double to)
+    // The last measurement, so switching level needs no new one, and a message
+    // to show instead when the file can't be measured.
+    private (NoiseLevels Levels, double From, double To)? _noiseMeasurement;
+    private string? _noiseMessage;
+
+    // A problem with the typed stretch: shown instead of the result, which no longer matches the boxes.
+    private void ShowNoiseProblem(string message)
     {
+        _noiseMeasurement = null;
+        _noiseMessage = message;
+        ShowNoiseResult();
+    }
+
+    // A coloured verdict for the picked level, and below it the levels with their limits.
+    private void ShowNoiseResult()
+    {
+        if (NoiseVerdictText == null || NoiseResultText == null) return;   // during InitializeComponent
         var culture = CultureInfo.CurrentCulture;
-        var lines = new List<string>
+        var limit = BackgroundNoise.LojLimits.Single(l => l.Level == _lojLevel);
+        string limitsText = string.Format(culture, "Kravnivå {0}: below {1} dB(A) and below {2} dB(C).",
+            limit.Level, limit.MaxDbA, limit.MaxDbC);
+
+        if (_noiseMeasurement is not { } measurement)
         {
-            string.Format(culture, "LAeq  {0,5:0.0} dBA", levels.LAeq),
-            string.Format(culture, "LCeq  {0,5:0.0} dBC", levels.LCeq),
-            string.Format(culture, "LZeq  {0,5:0.0} dB (unweighted)", levels.LZeq),
-            string.Format(culture, "over {0:0.00}–{1:0.00} s ({2:0.00} s)", from, to, levels.DurationSeconds),
-            "",
-            "LOJ Kravnivå   limit              result",
-        };
-        foreach (var limit in BackgroundNoise.LojLimits)
-        {
-            lines.Add(string.Format(culture, "{0,-14} <{1} dBA, <{2} dBC   {3}",
-                limit.Level, limit.MaxDbA, limit.MaxDbC, limit.IsMetBy(levels) ? "meets" : "fails"));
+            SetVerdict(NoiseVerdictBorder, NoiseVerdictText,
+                _noiseMessage ?? $"Select a stretch with only background noise and press Measure to compare with Kravnivå {limit.Level}.",
+                NoResultColors);
+            NoiseResultText.Text = limitsText;
+            return;
         }
-        return string.Join("\n", lines);
+
+        var levels = measurement.Levels;
+        bool aMet = levels.LAeq < limit.MaxDbA, cMet = levels.LCeq < limit.MaxDbC;
+        if (aMet && cMet)
+        {
+            SetVerdict(NoiseVerdictBorder, NoiseVerdictText, $"✓ Meets Kravnivå {limit.Level}", MeetsColors);
+        }
+        else
+        {
+            string tooHigh = !aMet && !cMet ? "dB(A) and dB(C)" : !aMet ? "dB(A)" : "dB(C)";
+            SetVerdict(NoiseVerdictBorder, NoiseVerdictText, $"✗ Fails Kravnivå {limit.Level}: {tooHigh} too high", FailsColors);
+        }
+
+        NoiseResultText.Text = string.Join("\n",
+            "Level              measured   limit      result",
+            string.Format(culture, "LAeq (A-weighted)  {0,5:0.0} dB   < {1} dB    {2}", levels.LAeq, limit.MaxDbA, aMet ? "meets" : "fails"),
+            string.Format(culture, "LCeq (C-weighted)  {0,5:0.0} dB   < {1} dB    {2}", levels.LCeq, limit.MaxDbC, cMet ? "meets" : "fails"),
+            string.Format(culture, "LZeq (unweighted)  {0,5:0.0} dB", levels.LZeq),
+            "",
+            string.Format(culture, "Measured over {0:0.000}–{1:0.000} s ({2:0.00} s). Both levels must be below their limits.",
+                measurement.From, measurement.To, levels.DurationSeconds));
     }
 
     // The reverberation time only depends on how fast the level falls, so it
@@ -481,13 +518,26 @@ public partial class MainWindow : Window
     private static readonly (Color Background, Color Text) CantTellColors = (Color.FromRgb(0xFC, 0xF0, 0xD4), Color.FromRgb(0x8A, 0x5A, 0x00));
     private static readonly (Color Background, Color Text) NoResultColors = (Color.FromRgb(0xEE, 0xEE, 0xEE), Color.FromRgb(0x55, 0x55, 0x55));
 
-    private LojReverbLimit SelectedLojLimit()
-    {
-        int level = LojLevel1Button.IsChecked == true ? 1 : LojLevel2Button.IsChecked == true ? 2 : 3;
-        return LojReverbLimit.All.Single(l => l.Level == level);
-    }
+    // The Kravnivå picked, shared by the background-noise and reverberation tabs: picking one on either tab picks it on both.
+    private int _lojLevel = 3;
 
-    private void LojLevelButton_Checked(object sender, RoutedEventArgs e) => ShowLojResult();
+    private LojReverbLimit SelectedLojLimit() => LojReverbLimit.All.Single(l => l.Level == _lojLevel);
+
+    private void LojLevelButton_Checked(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string tag }) return;
+        _lojLevel = int.Parse(tag, CultureInfo.InvariantCulture);
+        if (LojLevel1Button == null || NoiseLojLevel1Button == null) return;   // during InitializeComponent
+
+        // Check the same level on the other tab. Checking an already checked button raises nothing, so this doesn't go round in circles.
+        var reverbButtons = new[] { LojLevel1Button, LojLevel2Button, LojLevel3Button };
+        var noiseButtons = new[] { NoiseLojLevel1Button, NoiseLojLevel2Button, NoiseLojLevel3Button };
+        reverbButtons[_lojLevel - 1].IsChecked = true;
+        noiseButtons[_lojLevel - 1].IsChecked = true;
+
+        ShowLojResult();
+        ShowNoiseResult();
+    }
 
     // A coloured verdict for the picked level, and below it every band with its T20 and limit.
     private void ShowLojResult()
@@ -539,11 +589,14 @@ public partial class MainWindow : Window
         LojReverbText.Text = string.Join("\n", lines);
     }
 
-    private void SetLojVerdict(string text, (Color Background, Color Text) colors)
+    private void SetLojVerdict(string text, (Color Background, Color Text) colors) =>
+        SetVerdict(LojVerdictBorder, LojVerdictText, text, colors);
+
+    private static void SetVerdict(Border border, TextBlock textBlock, string text, (Color Background, Color Text) colors)
     {
-        LojVerdictText.Text = text;
-        LojVerdictText.Foreground = new SolidColorBrush(colors.Text);
-        LojVerdictBorder.Background = new SolidColorBrush(colors.Background);
+        textBlock.Text = text;
+        textBlock.Foreground = new SolidColorBrush(colors.Text);
+        border.Background = new SolidColorBrush(colors.Background);
     }
 
     private void ReverbTable_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -660,7 +713,10 @@ public partial class MainWindow : Window
 
         _pressure = null;
         NoiseFromBox.IsEnabled = NoiseToBox.IsEnabled = MeasureNoiseButton.IsEnabled = false;
-        NoiseFromBox.Text = NoiseToBox.Text = NoiseResultText.Text = "";
+        NoiseFromBox.Text = NoiseToBox.Text = "";
+        _noiseMeasurement = null;
+        _noiseMessage = null;
+        ShowNoiseResult();
 
         _samples = null;
         _analysedReverbStretch = null;
